@@ -1,0 +1,14 @@
+{
+  "name": "gemini-image-gen",
+  "version": "1.0.0",
+  "description": "Replicate Gemini web UI image generation",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "mime-types": "^3.0.2"
+  }
+}
