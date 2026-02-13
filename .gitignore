@@ -3,3 +3,4 @@ node_modules/
 output/
 debug_response.txt
 *.har
+.chrome-profile/
