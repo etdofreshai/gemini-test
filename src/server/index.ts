@@ -1,11 +1,12 @@
 import "dotenv/config";
+import { createServer } from "http";
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
 import { loadFromEnv, hasCookies } from "./lib/cookies.js";
 import authRouter from "./routes/auth.js";
 import generateRouter from "./routes/generate.js";
-import remoteLoginRouter from "./routes/remote-login.js";
+import remoteLoginRouter, { handleRemoteLoginWs } from "./routes/remote-login.js";
 
 // Bootstrap cookies from .env if available
 loadFromEnv();
@@ -35,8 +36,21 @@ app.get("*", (_req, res) => {
   res.sendFile(path.join(clientDir, "index.html"));
 });
 
+// Create HTTP server to handle WebSocket upgrades
+const httpServer = createServer(app);
+
+// Handle WebSocket upgrade for remote login screencast
+httpServer.on("upgrade", (req, socket, head) => {
+  const url = req.url || "";
+  if (url === "/auth/remote-login/ws") {
+    handleRemoteLoginWs(req, socket as any, head);
+  } else {
+    socket.destroy();
+  }
+});
+
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+httpServer.listen(PORT, () => {
   console.log(`Gemini image server listening on http://localhost:${PORT}`);
   console.log(
     hasCookies()

@@ -2,9 +2,6 @@ FROM node:22-slim AS build
 
 WORKDIR /app
 
-# Skip Puppeteer's bundled Chromium during build
-ENV PUPPETEER_SKIP_DOWNLOAD=true
-
 COPY package.json package-lock.json ./
 RUN npm ci
 
@@ -14,7 +11,7 @@ RUN npm run build
 # --- Runtime ---
 FROM node:22-slim
 
-# Chromium deps for headless Puppeteer (session restore)
+# Install Chromium and Xvfb (headed Chrome with virtual display = Google thinks it's real)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
     fonts-liberation \
@@ -35,9 +32,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb \
     && rm -rf /var/lib/apt/lists/*
 
-# Use system Chromium instead of Puppeteer's bundled one
-ENV PUPPETEER_SKIP_DOWNLOAD=true
+# Point browser.ts at the system Chromium
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+
+# Start Xvfb so Chromium can run headed (avoids Google bot detection)
+ENV DISPLAY=:99
 
 WORKDIR /app
 
@@ -48,8 +47,5 @@ COPY --from=build /app/dist ./dist
 
 RUN mkdir -p tmp
 
-# Pass cookies via env vars:
-#   docker run -e __Secure-1PSID=... -e __Secure-1PSIDTS=... -p 3000:3000 gemini-image-gen
-# Or use GOOGLE_COOKIES="__Secure-1PSID=...;__Secure-1PSIDTS=..."
-# Note: Browser login (headless: false) is not available in Docker.
-CMD ["node", "dist/server/index.js"]
+# Entrypoint: start Xvfb, then the node server
+CMD ["sh", "-c", "Xvfb :99 -screen 0 1280x720x24 -nolisten tcp & sleep 1 && node dist/server/index.js"]

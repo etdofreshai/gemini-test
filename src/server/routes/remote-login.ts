@@ -1,87 +1,50 @@
+import type { IncomingMessage } from "http";
+import type { Socket } from "net";
 import { Router } from "express";
-import puppeteerExtra from "puppeteer-extra";
-import StealthPlugin from "puppeteer-extra-plugin-stealth";
-import type { Browser, Page, KeyInput } from "puppeteer";
-import { execSync, spawn, type ChildProcess } from "child_process";
-
-const puppeteer = puppeteerExtra.default ?? puppeteerExtra;
-(puppeteer as any).use(StealthPlugin());
-
-let xvfbProcess: ChildProcess | null = null;
-
-function ensureXvfb(): void {
-  // Check if a display is already available
-  if (process.env.DISPLAY) return;
-  try {
-    // Check if Xvfb is installed
-    execSync("which Xvfb", { stdio: "ignore" });
-  } catch {
-    console.log("[Remote Login] Xvfb not found, falling back to headless");
-    return;
-  }
-  // Start Xvfb on display :99
-  console.log("[Remote Login] Starting Xvfb on :99");
-  xvfbProcess = spawn("Xvfb", [":99", "-screen", "0", "1280x800x24", "-nolisten", "tcp"], {
-    stdio: "ignore",
-    detached: true,
-  });
-  xvfbProcess.unref();
-  process.env.DISPLAY = ":99";
-  // Give it a moment to start
-  execSync("sleep 0.5");
-}
+import { WebSocket as NodeWebSocket, WebSocketServer } from "ws";
+import {
+  ensureChromium,
+  createLoginScreencast,
+  cdpListTabs,
+  cdpCloseTab,
+} from "../lib/browser.js";
 import { setCookies } from "../lib/cookies.js";
 
 const router = Router();
+const wss = new WebSocketServer({ noServer: true });
 
-const GEMINI_APP_URL = "https://gemini.google.com/app";
-const GOOGLE_LOGIN_URL = "https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fgemini.google.com%2Fapp";
 const SESSION_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 const VIEWPORT_WIDTH = 1280;
 const VIEWPORT_HEIGHT = 800;
 
-const STEALTH_ARGS = [
-  "--no-sandbox",
-  "--no-first-run",
-  "--no-default-browser-check",
-  "--disable-blink-features=AutomationControlled",
-  "--disable-features=AutomationControlled,IsolateOrigins,site-per-process",
-  "--disable-dev-shm-usage",
-  "--disable-infobars",
-  "--window-size=1280,800",
-  "--lang=en-US,en",
-  "--disable-background-timer-throttling",
-  "--disable-backgrounding-occluded-windows",
-  "--disable-renderer-backgrounding",
-];
+type SessionStatus = "idle" | "running" | "success" | "timeout" | "error";
 
-const REAL_USER_AGENT =
-  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
-
-type SessionStatus = "running" | "success" | "timeout" | "error";
-
-interface RemoteSession {
-  browser: Browser;
-  page: Page;
+interface LoginSession {
+  tabId: string;
+  webSocketDebuggerUrl: string;
   status: SessionStatus;
   message: string;
-  capturedCookies: Record<string, string>;
-  timeoutHandle: ReturnType<typeof setTimeout>;
   startedAt: number;
+  timeoutHandle: ReturnType<typeof setTimeout>;
 }
 
-let session: RemoteSession | null = null;
+let session: LoginSession | null = null;
 
-async function closeSession() {
+function closeSession() {
   if (!session) return;
   const s = session;
   session = null;
   clearTimeout(s.timeoutHandle);
-  try {
-    await s.browser.close();
-  } catch {
-    // ignore
-  }
+  // Close the tab asynchronously
+  cdpListTabs()
+    .then((tabs) => {
+      for (const tab of tabs) {
+        if (tab.id === s.tabId) {
+          cdpCloseTab(tab.id).catch(() => {});
+        }
+      }
+    })
+    .catch(() => {});
 }
 
 // ── Routes ────────────────────────────────────────────────────────────────────
@@ -99,227 +62,35 @@ router.post("/remote-login/start", async (_req, res) => {
   }
 
   // Close any stale session
-  await closeSession();
+  closeSession();
 
   try {
-    // Start virtual display so Chrome runs in full headed mode
-    ensureXvfb();
-    const useHeadless = !process.env.DISPLAY;
+    console.log("[Remote Login] Starting Chromium and creating login tab...");
+    const tabInfo = await createLoginScreencast();
 
-    console.log(`[Remote Login] Launching Chrome (headless=${useHeadless}, DISPLAY=${process.env.DISPLAY || "none"})`);
-
-    const browser = await (puppeteer as any).launch({
-      headless: useHeadless,
-      args: [
-        ...STEALTH_ARGS,
-        "--enable-features=NetworkService,NetworkServiceInProcess",
-        ...(process.env.DISPLAY ? [`--display=${process.env.DISPLAY}`] : []),
-      ],
-      ignoreDefaultArgs: ["--enable-automation"],
-    });
-
-    const page = await browser.newPage();
-    await page.setViewport({ width: VIEWPORT_WIDTH, height: VIEWPORT_HEIGHT });
-    await page.setUserAgent(REAL_USER_AGENT);
-
-    // Extra stealth patches beyond the plugin
-    await page.evaluateOnNewDocument(() => {
-      // Override webdriver
-      Object.defineProperty(navigator, "webdriver", { get: () => false });
-      // Override permissions
-      const originalQuery = window.navigator.permissions.query;
-      (window.navigator.permissions as any).query = (parameters: any) =>
-        parameters.name === "notifications"
-          ? Promise.resolve({ state: Notification.permission } as PermissionStatus)
-          : originalQuery(parameters);
-      // Override plugins to look real
-      Object.defineProperty(navigator, "plugins", {
-        get: () => [1, 2, 3, 4, 5],
-      });
-      // Override languages
-      Object.defineProperty(navigator, "languages", {
-        get: () => ["en-US", "en"],
-      });
-      // Chrome runtime
-      (window as any).chrome = { runtime: {} };
-      delete (window as any).cdc_adoQpoasnfa76pfcZLmcfl_Array;
-      delete (window as any).cdc_adoQpoasnfa76pfcZLmcfl_Promise;
-      delete (window as any).cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
-    });
-
-    const capturedCookies: Record<string, string> = {};
-
-    const checkAndCapture = () => {
-      if (
-        session &&
-        session.status === "running" &&
-        capturedCookies["__Secure-1PSID"] &&
-        capturedCookies["__Secure-1PSIDTS"]
-      ) {
-        clearTimeout(session.timeoutHandle);
-        setCookies(capturedCookies);
-        session.status = "success";
-        session.message = "✅ Login successful! Cookies captured. Redirecting…";
-        console.log("[Remote Login] Cookies captured successfully.");
-        // Auto-close after a short delay so the UI can show the success state
-        setTimeout(() => closeSession(), 4000);
-      }
-    };
-
-    // CDP cookie capture — same logic as loginFlow in auth.ts
-    const cdp = await page.createCDPSession();
-    await cdp.send("Network.enable");
-
-    cdp.on("Network.responseReceivedExtraInfo", (params: any) => {
-      const headers = params.headers || {};
-      for (const [name, value] of Object.entries(headers)) {
-        if (name.toLowerCase() !== "set-cookie") continue;
-        const entries = String(value).split("\n");
-        for (const entry of entries) {
-          const match = entry.match(/^(__Secure-1PSID[A-Z]*)=([^;]+)/);
-          if (match) {
-            capturedCookies[match[1]] = match[2];
-            console.log(`  [Remote] Captured ${match[1]} (Set-Cookie)`);
-          }
-        }
-      }
-      checkAndCapture();
-    });
-
-    cdp.on("Network.requestWillBeSentExtraInfo", (params: any) => {
-      if (Array.isArray(params.associatedCookies)) {
-        for (const entry of params.associatedCookies) {
-          const c = entry.cookie;
-          if (c?.name?.startsWith("__Secure-1PSID") && c.value) {
-            capturedCookies[c.name] = c.value;
-          }
-        }
-      }
-      const h = params.headers?.["cookie"] || params.headers?.["Cookie"];
-      if (h && h.includes("__Secure-1PSID")) {
-        for (const pair of h.split(";")) {
-          const idx = pair.indexOf("=");
-          if (idx > 0) {
-            const name = pair.slice(0, idx).trim();
-            const val = pair.slice(idx + 1).trim();
-            if (name.startsWith("__Secure-1PSID") && val) {
-              capturedCookies[name] = val;
-            }
-          }
-        }
-      }
-      checkAndCapture();
-    });
-
-    const timeoutHandle = setTimeout(async () => {
+    const timeoutHandle = setTimeout(() => {
       if (session && session.status === "running") {
         console.log("[Remote Login] Session timed out.");
         session.status = "timeout";
         session.message = "⏰ Session timed out after 5 minutes.";
-        await closeSession();
+        closeSession();
       }
     }, SESSION_TIMEOUT_MS);
 
     session = {
-      browser,
-      page,
+      tabId: tabInfo.id,
+      webSocketDebuggerUrl: tabInfo.webSocketDebuggerUrl,
       status: "running",
-      message: "Browser started. Navigating to Gemini…",
-      capturedCookies,
-      timeoutHandle,
+      message: "Browser started. Please log in to your Google account.",
       startedAt: Date.now(),
+      timeoutHandle,
     };
 
-    // Navigate in background — don't await so the response is immediate
-    page
-      .goto(GOOGLE_LOGIN_URL, { waitUntil: "networkidle2", timeout: 60000 })
-      .then(() => {
-        if (session && session.status === "running") {
-          session.message =
-            "Page loaded. Please log in to your Google account.";
-        }
-      })
-      .catch((err: Error) => {
-        console.log("[Remote Login] Navigation error:", err.message);
-        if (session && session.status === "running") {
-          session.message = "Navigation error — try clicking again or wait.";
-        }
-      });
-
+    console.log("[Remote Login] Session started, tab:", tabInfo.id);
     res.json({ success: true, message: "Browser session started." });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
     console.error("[Remote Login] Failed to start:", message);
-    res.status(500).json({ error: message });
-  }
-});
-
-// Return current screenshot as JPEG
-router.get("/remote-login/screenshot", async (_req, res) => {
-  if (!session || session.status !== "running") {
-    return res.status(404).json({ error: "No active session" });
-  }
-  try {
-    const buf = await session.page.screenshot({ type: "jpeg", quality: 75 });
-    res.setHeader("Content-Type", "image/jpeg");
-    res.setHeader("Cache-Control", "no-store");
-    res.send(Buffer.from(buf));
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Screenshot failed";
-    res.status(500).json({ error: message });
-  }
-});
-
-// Click at browser-viewport coordinates
-router.post("/remote-login/click", async (req, res) => {
-  if (!session || session.status !== "running") {
-    return res.status(404).json({ error: "No active session" });
-  }
-  const { x, y } = req.body as { x: number; y: number };
-  if (typeof x !== "number" || typeof y !== "number") {
-    return res.status(400).json({ error: "x and y must be numbers" });
-  }
-  try {
-    await session.page.mouse.click(x, y);
-    res.json({ success: true });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Click failed";
-    res.status(500).json({ error: message });
-  }
-});
-
-// Type text into the focused element
-router.post("/remote-login/type", async (req, res) => {
-  if (!session || session.status !== "running") {
-    return res.status(404).json({ error: "No active session" });
-  }
-  const { text } = req.body as { text: string };
-  if (typeof text !== "string") {
-    return res.status(400).json({ error: "text must be a string" });
-  }
-  try {
-    await session.page.keyboard.type(text);
-    res.json({ success: true });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Type failed";
-    res.status(500).json({ error: message });
-  }
-});
-
-// Press a named key (Enter, Tab, Backspace, etc.)
-router.post("/remote-login/keypress", async (req, res) => {
-  if (!session || session.status !== "running") {
-    return res.status(404).json({ error: "No active session" });
-  }
-  const { key } = req.body as { key: string };
-  if (typeof key !== "string") {
-    return res.status(400).json({ error: "key must be a string" });
-  }
-  try {
-    await session.page.keyboard.press(key as KeyInput);
-    res.json({ success: true });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Keypress failed";
     res.status(500).json({ error: message });
   }
 });
@@ -338,12 +109,236 @@ router.get("/remote-login/status", (_req, res) => {
 });
 
 // Stop / abort the session
-router.post("/remote-login/stop", async (_req, res) => {
-  await closeSession();
+router.post("/remote-login/stop", (_req, res) => {
+  closeSession();
   res.json({ success: true });
 });
 
-// ── Self-contained HTML UI ────────────────────────────────────────────────────
+// ── WebSocket upgrade handler (called from index.ts on "upgrade" event) ────────
+
+export function handleRemoteLoginWs(req: IncomingMessage, socket: Socket, head: Buffer) {
+  wss.handleUpgrade(req, socket, head, (clientWs) => {
+    if (!session || session.status !== "running") {
+      clientWs.close(1008, "No active login session");
+      return;
+    }
+
+    const cdpWsUrl = session.webSocketDebuggerUrl;
+    const cdpWs = new NodeWebSocket(cdpWsUrl);
+    let cmdId = 1;
+    const capturedCookies: Record<string, string> = {};
+
+    function cdpCommand(method: string, params: any = {}) {
+      const id = cmdId++;
+      if (cdpWs.readyState === NodeWebSocket.OPEN) {
+        cdpWs.send(JSON.stringify({ method, params, id }));
+      }
+      return id;
+    }
+
+    function checkAndCapture() {
+      if (
+        capturedCookies["__Secure-1PSID"] &&
+        capturedCookies["__Secure-1PSIDTS"] &&
+        session
+      ) {
+        console.log("[Remote Login] Auth cookies captured successfully!");
+        setCookies(capturedCookies);
+        session.status = "success";
+        session.message = "✅ Login successful! Cookies captured.";
+        if (clientWs.readyState === NodeWebSocket.OPEN) {
+          clientWs.send(JSON.stringify({ type: "success" }));
+        }
+        // Auto-close after a short delay so UI can show success state
+        setTimeout(() => closeSession(), 4000);
+      }
+    }
+
+    cdpWs.on("open", () => {
+      cdpCommand("Page.enable");
+      cdpCommand("Network.enable");
+      cdpCommand("Page.startScreencast", {
+        format: "jpeg",
+        quality: 60,
+        maxWidth: VIEWPORT_WIDTH,
+        maxHeight: VIEWPORT_HEIGHT,
+      });
+    });
+
+    cdpWs.on("message", (data) => {
+      try {
+        const msg = JSON.parse(data.toString());
+
+        if (msg.method === "Page.screencastFrame") {
+          const { sessionId, metadata } = msg.params;
+          // Forward frame to client
+          if (clientWs.readyState === NodeWebSocket.OPEN) {
+            clientWs.send(
+              JSON.stringify({
+                type: "frame",
+                data: msg.params.data,
+                metadata,
+              })
+            );
+          }
+          // Acknowledge the frame
+          cdpCommand("Page.screencastFrameAck", { sessionId });
+        } else if (msg.method === "Network.responseReceivedExtraInfo") {
+          // Capture cookies from Set-Cookie response headers
+          const headers = msg.params.headers || {};
+          for (const [name, value] of Object.entries(headers)) {
+            if (name.toLowerCase() !== "set-cookie") continue;
+            const entries = String(value).split("\n");
+            for (const entry of entries) {
+              const match = entry.match(/^(__Secure-1PSID[A-Z]*)=([^;]+)/);
+              if (match) {
+                capturedCookies[match[1]] = match[2];
+                console.log(`[Remote Login] Captured ${match[1]} from Set-Cookie`);
+              }
+            }
+          }
+          checkAndCapture();
+        } else if (msg.method === "Network.requestWillBeSentExtraInfo") {
+          // Capture cookies from outgoing request headers
+          const params = msg.params;
+          if (Array.isArray(params.associatedCookies)) {
+            for (const entry of params.associatedCookies) {
+              const c = entry.cookie;
+              if (c?.name?.startsWith("__Secure-1PSID") && c.value) {
+                capturedCookies[c.name] = c.value;
+              }
+            }
+          }
+          const h = params.headers?.["cookie"] || params.headers?.["Cookie"];
+          if (h && h.includes("__Secure-1PSID")) {
+            for (const pair of h.split(";")) {
+              const idx = pair.indexOf("=");
+              if (idx > 0) {
+                const name = pair.slice(0, idx).trim();
+                const val = pair.slice(idx + 1).trim();
+                if (name.startsWith("__Secure-1PSID") && val) {
+                  capturedCookies[name] = val;
+                }
+              }
+            }
+          }
+          checkAndCapture();
+        }
+      } catch {}
+    });
+
+    // Handle input events from client
+    clientWs.on("message", (data) => {
+      try {
+        const msg = JSON.parse(data.toString());
+
+        if (msg.type === "click") {
+          const { x, y } = msg;
+          cdpCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
+          setTimeout(() => {
+            cdpCommand("Input.dispatchMouseEvent", {
+              type: "mousePressed",
+              x,
+              y,
+              button: "left",
+              clickCount: 1,
+            });
+            setTimeout(() => {
+              cdpCommand("Input.dispatchMouseEvent", {
+                type: "mouseReleased",
+                x,
+                y,
+                button: "left",
+                clickCount: 1,
+              });
+            }, 50);
+          }, 30);
+        } else if (msg.type === "keydown") {
+          const key = msg.key;
+          if (key === "Enter") {
+            cdpCommand("Input.dispatchKeyEvent", {
+              type: "rawKeyDown",
+              key: "Enter",
+              code: "Enter",
+              windowsVirtualKeyCode: 13,
+            });
+            cdpCommand("Input.dispatchKeyEvent", { type: "char", text: "\r" });
+            cdpCommand("Input.dispatchKeyEvent", {
+              type: "keyUp",
+              key: "Enter",
+              code: "Enter",
+              windowsVirtualKeyCode: 13,
+            });
+          } else if (key === "Backspace") {
+            cdpCommand("Input.dispatchKeyEvent", {
+              type: "rawKeyDown",
+              key: "Backspace",
+              code: "Backspace",
+              windowsVirtualKeyCode: 8,
+            });
+            cdpCommand("Input.dispatchKeyEvent", {
+              type: "keyUp",
+              key: "Backspace",
+              code: "Backspace",
+              windowsVirtualKeyCode: 8,
+            });
+          } else if (key === "Tab") {
+            cdpCommand("Input.dispatchKeyEvent", {
+              type: "rawKeyDown",
+              key: "Tab",
+              code: "Tab",
+              windowsVirtualKeyCode: 9,
+            });
+            cdpCommand("Input.dispatchKeyEvent", {
+              type: "keyUp",
+              key: "Tab",
+              code: "Tab",
+              windowsVirtualKeyCode: 9,
+            });
+          } else if (key === "Escape") {
+            cdpCommand("Input.dispatchKeyEvent", {
+              type: "rawKeyDown",
+              key: "Escape",
+              code: "Escape",
+              windowsVirtualKeyCode: 27,
+            });
+            cdpCommand("Input.dispatchKeyEvent", {
+              type: "keyUp",
+              key: "Escape",
+              code: "Escape",
+              windowsVirtualKeyCode: 27,
+            });
+          } else {
+            cdpCommand("Input.dispatchKeyEvent", {
+              type: "keyDown",
+              key,
+              text: key,
+            });
+            cdpCommand("Input.dispatchKeyEvent", { type: "keyUp", key });
+          }
+        } else if (msg.type === "type") {
+          cdpCommand("Input.insertText", { text: msg.text });
+        }
+      } catch {}
+    });
+
+    const cleanup = () => {
+      try { cdpCommand("Page.stopScreencast"); } catch {}
+      try { cdpWs.close(); } catch {}
+      try { clientWs.close(); } catch {}
+    };
+
+    clientWs.on("close", cleanup);
+    cdpWs.on("close", () => { try { clientWs.close(); } catch {} });
+    cdpWs.on("error", (err) => {
+      console.error("[Remote Login] CDP WS error:", err.message);
+      try { clientWs.close(); } catch {}
+    });
+    clientWs.on("error", () => cleanup());
+  });
+}
+
+// ── Self-contained HTML UI (WebSocket + canvas-based) ─────────────────────────
 
 const REMOTE_LOGIN_HTML = /* html */ `<!DOCTYPE html>
 <html lang="en">
@@ -390,18 +385,18 @@ const REMOTE_LOGIN_HTML = /* html */ `<!DOCTYPE html>
   #type-input:focus{outline:none;border-color:#2563eb}
   .key-group{display:flex;gap:4px}
 
-  #screenshot-wrap{
+  #canvas-wrap{
     width:100%;max-width:900px;position:relative;
     background:#111;border:1px solid #333;border-radius:8px;overflow:hidden;
     cursor:crosshair;
   }
-  #screenshot-wrap.inactive{cursor:default}
-  #screenshot-img{
-    display:block;width:100%;height:auto;user-select:none;-webkit-user-drag:none;
+  #canvas-wrap.inactive{cursor:default}
+  #screen{
+    display:block;width:100%;height:auto;user-select:none;
   }
-  #screenshot-placeholder{
+  #placeholder{
     width:100%;aspect-ratio:16/10;display:flex;align-items:center;justify-content:center;
-    color:#555;font-size:1rem;
+    color:#555;font-size:1rem;position:absolute;inset:0;
   }
   #click-flash{
     position:absolute;pointer-events:none;border-radius:50%;
@@ -409,9 +404,8 @@ const REMOTE_LOGIN_HTML = /* html */ `<!DOCTYPE html>
     display:none;
   }
   #overlay-msg{
-    position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    position:absolute;inset:0;display:none;align-items:center;justify-content:center;
     background:rgba(0,0,0,.7);font-size:1.3rem;font-weight:600;color:#fff;
-    display:none;
   }
 </style>
 </head>
@@ -437,20 +431,24 @@ const REMOTE_LOGIN_HTML = /* html */ `<!DOCTYPE html>
   </div>
 </div>
 
-<div id="screenshot-wrap" class="inactive" onclick="onScreenshotClick(event)">
-  <div id="screenshot-placeholder">Screenshot will appear here after starting the session.</div>
-  <img id="screenshot-img" src="" alt="" style="display:none"/>
+<div id="canvas-wrap" class="inactive" onclick="onCanvasClick(event)">
+  <canvas id="screen" width="${VIEWPORT_WIDTH}" height="${VIEWPORT_HEIGHT}"></canvas>
+  <div id="placeholder">Screenshot will appear here after starting the session.</div>
   <div id="click-flash"></div>
   <div id="overlay-msg"></div>
 </div>
 
 <script>
 const BASE = '/auth';
-let polling = false;
-let pollTimer = null;
-let timerInterval = null;
+let ws = null;
 let sessionActive = false;
 let startTime = null;
+let timerInterval = null;
+let hasFirstFrame = false;
+
+const canvas = document.getElementById('screen');
+const ctx = canvas.getContext('2d');
+const placeholder = document.getElementById('placeholder');
 
 function setStatus(text, dotClass) {
   document.getElementById('status-text').textContent = text;
@@ -465,7 +463,7 @@ function setControlsEnabled(enabled) {
   ['key-enter','key-tab','key-bs','key-esc'].forEach(id => {
     document.getElementById(id).disabled = !enabled;
   });
-  document.getElementById('screenshot-wrap').classList.toggle('inactive', !enabled);
+  document.getElementById('canvas-wrap').classList.toggle('inactive', !enabled);
 }
 
 function startTimer() {
@@ -488,17 +486,70 @@ function stopTimer() {
   document.getElementById('timer').textContent = '';
 }
 
+function connectWs() {
+  if (ws) { try { ws.close(); } catch {} }
+
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = proto + '//' + location.host + '/auth/remote-login/ws';
+  ws = new WebSocket(wsUrl);
+
+  ws.onopen = () => {
+    console.log('[WS] Connected to screencast');
+  };
+
+  ws.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+
+      if (msg.type === 'frame') {
+        // Draw JPEG frame onto canvas
+        const img = new Image();
+        img.onload = () => {
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          if (!hasFirstFrame) {
+            hasFirstFrame = true;
+            placeholder.style.display = 'none';
+          }
+        };
+        img.src = 'data:image/jpeg;base64,' + msg.data;
+      } else if (msg.type === 'success') {
+        stopTimer();
+        setStatus('✅ Login successful! Cookies captured. Redirecting…', 'success');
+        setControlsEnabled(false);
+        showOverlay('✅ Login successful! Redirecting…');
+        document.getElementById('start-btn').disabled = false;
+        if (ws) { try { ws.close(); } catch {} ws = null; }
+        setTimeout(() => { window.location.href = '/'; }, 3000);
+      }
+    } catch(e) {}
+  };
+
+  ws.onclose = () => {
+    console.log('[WS] Disconnected from screencast');
+  };
+
+  ws.onerror = (e) => {
+    console.error('[WS] Error', e);
+  };
+}
+
 async function startSession() {
   document.getElementById('start-btn').disabled = true;
+  hasFirstFrame = false;
   setStatus('Starting browser…', 'running');
   try {
     const r = await fetch(BASE + '/remote-login/start', { method: 'POST' });
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || 'Failed to start');
-    setStatus('Browser started. Waiting for page load…', 'running');
+    setStatus('Browser started. Connecting to screencast…', 'running');
     setControlsEnabled(true);
     startTimer();
-    startPolling();
+    // Small delay to ensure session is ready before WS connect
+    setTimeout(() => {
+      connectWs();
+      // Poll status for timeout/error detection
+      startStatusPolling();
+    }, 500);
   } catch(e) {
     setStatus('Error: ' + e.message, 'error');
     document.getElementById('start-btn').disabled = false;
@@ -506,91 +557,54 @@ async function startSession() {
 }
 
 async function stopSession() {
-  stopPolling();
   stopTimer();
+  stopStatusPolling();
+  if (ws) { try { ws.close(); } catch {} ws = null; }
   await fetch(BASE + '/remote-login/stop', { method: 'POST' }).catch(() => {});
   setControlsEnabled(false);
   setStatus('Session stopped.', '');
   document.getElementById('start-btn').disabled = false;
-  showPlaceholder('Session stopped.');
+  hasFirstFrame = false;
+  placeholder.style.display = 'flex';
+  placeholder.textContent = 'Session stopped.';
 }
 
-function startPolling() {
-  if (polling) return;
-  polling = true;
-  pollStep();
+let statusPollTimer = null;
+function startStatusPolling() {
+  statusPollTimer = setInterval(async () => {
+    try {
+      const r = await fetch(BASE + '/remote-login/status');
+      const data = await r.json();
+      if (data.status === 'success') {
+        stopStatusPolling();
+        // success handled by WS message
+      } else if (data.status === 'timeout') {
+        stopStatusPolling();
+        stopTimer();
+        setStatus(data.message, 'timeout');
+        setControlsEnabled(false);
+        showOverlay('⏰ Timed out. Please try again.');
+        document.getElementById('start-btn').disabled = false;
+        if (ws) { try { ws.close(); } catch {} ws = null; }
+      } else if (data.status === 'error') {
+        stopStatusPolling();
+        stopTimer();
+        setStatus(data.message || 'An error occurred.', 'error');
+        setControlsEnabled(false);
+        document.getElementById('start-btn').disabled = false;
+        if (ws) { try { ws.close(); } catch {} ws = null; }
+      } else if (data.status === 'running') {
+        // Update message but don't override active status
+        if (sessionActive) {
+          setStatus(data.message || 'Browser running…', 'running');
+        }
+      }
+    } catch {}
+  }, 3000);
 }
-
-function stopPolling() {
-  polling = false;
-  clearTimeout(pollTimer);
-}
-
-async function pollStep() {
-  if (!polling) return;
-
-  // Check status
-  try {
-    const r = await fetch(BASE + '/remote-login/status');
-    const data = await r.json();
-    if (data.status === 'success') {
-      polling = false;
-      stopTimer();
-      setStatus(data.message, 'success');
-      setControlsEnabled(false);
-      showOverlay('✅ Login successful! Redirecting…');
-      document.getElementById('start-btn').disabled = false;
-      setTimeout(() => { window.location.href = '/'; }, 3000);
-      return;
-    } else if (data.status === 'timeout') {
-      polling = false;
-      stopTimer();
-      setStatus(data.message, 'timeout');
-      setControlsEnabled(false);
-      showOverlay('⏰ Timed out. Please try again.');
-      document.getElementById('start-btn').disabled = false;
-      return;
-    } else if (data.status === 'error') {
-      polling = false;
-      stopTimer();
-      setStatus(data.message || 'An error occurred.', 'error');
-      setControlsEnabled(false);
-      document.getElementById('start-btn').disabled = false;
-      return;
-    } else if (data.status === 'running') {
-      setStatus(data.message || 'Browser running…', 'running');
-    }
-  } catch(e) {
-    // status check failed, continue
-  }
-
-  // Fetch screenshot
-  try {
-    const r = await fetch(BASE + '/remote-login/screenshot?t=' + Date.now());
-    if (r.ok) {
-      const blob = await r.blob();
-      const url = URL.createObjectURL(blob);
-      const img = document.getElementById('screenshot-img');
-      const old = img.src;
-      img.src = url;
-      img.style.display = 'block';
-      document.getElementById('screenshot-placeholder').style.display = 'none';
-      if (old && old.startsWith('blob:')) URL.revokeObjectURL(old);
-    }
-  } catch(e) {
-    // screenshot failed, continue
-  }
-
-  if (polling) {
-    pollTimer = setTimeout(pollStep, 500);
-  }
-}
-
-function showPlaceholder(msg) {
-  document.getElementById('screenshot-img').style.display = 'none';
-  const ph = document.getElementById('screenshot-placeholder');
-  ph.style.display = 'flex';
-  ph.textContent = msg;
+function stopStatusPolling() {
+  clearInterval(statusPollTimer);
+  statusPollTimer = null;
 }
 
 function showOverlay(msg) {
@@ -599,56 +613,42 @@ function showOverlay(msg) {
   o.style.display = 'flex';
 }
 
-function onScreenshotClick(event) {
-  if (!sessionActive) return;
-  const wrap = document.getElementById('screenshot-wrap');
-  const img = document.getElementById('screenshot-img');
-  if (img.style.display === 'none') return;
+function onCanvasClick(event) {
+  if (!sessionActive || !ws || ws.readyState !== WebSocket.OPEN) return;
 
-  const rect = img.getBoundingClientRect();
+  const rect = canvas.getBoundingClientRect();
   const relX = event.clientX - rect.left;
   const relY = event.clientY - rect.top;
 
-  // Map to actual browser viewport (1280×800)
-  const scaleX = ${VIEWPORT_WIDTH} / rect.width;
-  const scaleY = ${VIEWPORT_HEIGHT} / rect.height;
+  // Map CSS pixels → viewport pixels (1280×${VIEWPORT_HEIGHT})
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
   const bx = Math.round(relX * scaleX);
   const by = Math.round(relY * scaleY);
 
   // Show click flash
-  const flash = document.getElementById('click-flash');
+  const wrap = document.getElementById('canvas-wrap');
   const wrapRect = wrap.getBoundingClientRect();
+  const flash = document.getElementById('click-flash');
   flash.style.left = (event.clientX - wrapRect.left) + 'px';
   flash.style.top = (event.clientY - wrapRect.top) + 'px';
   flash.style.display = 'block';
   setTimeout(() => { flash.style.display = 'none'; }, 400);
 
-  fetch(BASE + '/remote-login/click', {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ x: bx, y: by })
-  }).catch(console.error);
+  ws.send(JSON.stringify({ type: 'click', x: bx, y: by }));
 }
 
 function sendType() {
   const input = document.getElementById('type-input');
   const text = input.value;
-  if (!text || !sessionActive) return;
-  fetch(BASE + '/remote-login/type', {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ text })
-  }).catch(console.error);
+  if (!text || !sessionActive || !ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: 'type', text }));
   input.value = '';
 }
 
 function sendKey(key) {
-  if (!sessionActive) return;
-  fetch(BASE + '/remote-login/keypress', {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ key })
-  }).catch(console.error);
+  if (!sessionActive || !ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: 'keydown', key }));
 }
 
 function onInputKey(event) {
@@ -657,6 +657,18 @@ function onInputKey(event) {
     sendType();
   }
 }
+
+// Allow keyboard typing when canvas is focused
+document.addEventListener('keydown', (event) => {
+  if (!sessionActive || !ws || ws.readyState !== WebSocket.OPEN) return;
+  // Don't intercept when typing in the input field
+  if (document.activeElement === document.getElementById('type-input')) return;
+  const specialKeys = ['Enter', 'Tab', 'Backspace', 'Escape', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
+  if (specialKeys.includes(event.key)) {
+    event.preventDefault();
+    ws.send(JSON.stringify({ type: 'keydown', key: event.key }));
+  }
+});
 </script>
 </body>
 </html>`;
