@@ -6,21 +6,9 @@ const router = Router();
 
 let loginInProgress = false;
 
-// GET /api/login — trigger Puppeteer login flow
-router.get("/login", async (_req, res) => {
-  if (loginInProgress) {
-    return res.status(409).json({ error: "Login already in progress" });
-  }
-  loginInProgress = true;
-  try {
-    await loginFlow();
-    res.json({ success: true });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    res.status(500).json({ error: message });
-  } finally {
-    loginInProgress = false;
-  }
+// GET /api/login — redirect to remote login UI (headful login not available in Docker)
+router.get("/login", (_req, res) => {
+  res.json({ redirect: "/auth/remote-login" });
 });
 
 // GET /api/status — check auth state

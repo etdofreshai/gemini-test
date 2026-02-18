@@ -33,9 +33,13 @@ export async function checkAuth(): Promise<AuthStatus> {
   return res.json();
 }
 
-export async function doLogin(): Promise<{ success?: boolean; error?: string }> {
+export async function doLogin(): Promise<{ success?: boolean; error?: string; redirect?: string }> {
   const res = await fetch("/api/login");
-  return res.json();
+  const data = await res.json();
+  if (data.redirect) {
+    window.location.href = data.redirect;
+  }
+  return data;
 }
 
 export async function generate(
