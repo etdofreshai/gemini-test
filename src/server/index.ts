@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 import { loadFromEnv, hasCookies } from "./lib/cookies.js";
 import authRouter from "./routes/auth.js";
 import generateRouter from "./routes/generate.js";
+import remoteLoginRouter from "./routes/remote-login.js";
 
 // Bootstrap cookies from .env if available
 loadFromEnv();
@@ -25,6 +26,9 @@ app.use(express.json());
 // API routes
 app.use("/api", authRouter);
 app.use("/api", generateRouter);
+
+// Remote browser login UI (self-contained HTML — must be before SPA fallback)
+app.use("/auth", remoteLoginRouter);
 
 // SPA fallback — serve index.html for unmatched GET routes
 app.get("*", (_req, res) => {

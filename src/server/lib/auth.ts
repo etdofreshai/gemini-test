@@ -10,6 +10,7 @@ const PROFILE_DIR = path.join(__dirname, "..", "..", "..", ".chrome-profile");
 const GEMINI_APP_URL = "https://gemini.google.com/app";
 
 const STEALTH_ARGS = [
+  "--no-sandbox",
   "--no-first-run",
   "--no-default-browser-check",
   "--disable-blink-features=AutomationControlled",
