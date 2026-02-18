@@ -32,6 +32,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxcomposite1 \
     libxdamage1 \
     libxrandr2 \
+    xvfb \
     && rm -rf /var/lib/apt/lists/*
 
 # Use system Chromium instead of Puppeteer's bundled one

@@ -2,9 +2,34 @@ import { Router } from "express";
 import puppeteerExtra from "puppeteer-extra";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import type { Browser, Page, KeyInput } from "puppeteer";
+import { execSync, spawn, type ChildProcess } from "child_process";
 
 const puppeteer = puppeteerExtra.default ?? puppeteerExtra;
 (puppeteer as any).use(StealthPlugin());
+
+let xvfbProcess: ChildProcess | null = null;
+
+function ensureXvfb(): void {
+  // Check if a display is already available
+  if (process.env.DISPLAY) return;
+  try {
+    // Check if Xvfb is installed
+    execSync("which Xvfb", { stdio: "ignore" });
+  } catch {
+    console.log("[Remote Login] Xvfb not found, falling back to headless");
+    return;
+  }
+  // Start Xvfb on display :99
+  console.log("[Remote Login] Starting Xvfb on :99");
+  xvfbProcess = spawn("Xvfb", [":99", "-screen", "0", "1280x800x24", "-nolisten", "tcp"], {
+    stdio: "ignore",
+    detached: true,
+  });
+  xvfbProcess.unref();
+  process.env.DISPLAY = ":99";
+  // Give it a moment to start
+  execSync("sleep 0.5");
+}
 import { setCookies } from "../lib/cookies.js";
 
 const router = Router();
@@ -77,11 +102,18 @@ router.post("/remote-login/start", async (_req, res) => {
   await closeSession();
 
   try {
-    const browser = await puppeteer.launch({
-      headless: "new" as any,
+    // Start virtual display so Chrome runs in full headed mode
+    ensureXvfb();
+    const useHeadless = !process.env.DISPLAY;
+
+    console.log(`[Remote Login] Launching Chrome (headless=${useHeadless}, DISPLAY=${process.env.DISPLAY || "none"})`);
+
+    const browser = await (puppeteer as any).launch({
+      headless: useHeadless,
       args: [
         ...STEALTH_ARGS,
         "--enable-features=NetworkService,NetworkServiceInProcess",
+        ...(process.env.DISPLAY ? [`--display=${process.env.DISPLAY}`] : []),
       ],
       ignoreDefaultArgs: ["--enable-automation"],
     });
