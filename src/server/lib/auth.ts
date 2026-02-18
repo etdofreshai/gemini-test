@@ -1,5 +1,8 @@
-import puppeteer from "puppeteer";
+import puppeteer from "puppeteer-extra";
+import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import type { Page } from "puppeteer";
+
+puppeteer.use(StealthPlugin());
 import path from "path";
 import { fileURLToPath } from "url";
 import { setCookies } from "./cookies.js";
