@@ -3,29 +3,28 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ENV_PATH = path.join(__dirname, "..", ".env");
+const ENV_PATH = path.join(__dirname, "..", "..", "..", ".env");
 
 // In-memory cookie store
-const store = {};
+const store: Record<string, string> = {};
 
-export function setCookies(obj) {
+export function setCookies(obj: Record<string, string>) {
   Object.assign(store, obj);
 }
 
-export function getCookieString() {
+export function getCookieString(): string {
   return Object.entries(store)
     .map(([k, v]) => `${k}=${v}`)
     .join("; ");
 }
 
-export function hasCookies() {
+export function hasCookies(): boolean {
   return Boolean(store["__Secure-1PSID"] && store["__Secure-1PSIDTS"]);
 }
 
 // Bootstrap from process.env / .env file
 export function loadFromEnv() {
   if (process.env.GOOGLE_COOKIES) {
-    // Parse "key=val; key=val" string into store
     for (const pair of process.env.GOOGLE_COOKIES.split(";")) {
       const idx = pair.indexOf("=");
       if (idx > 0) {
@@ -41,10 +40,10 @@ export function loadFromEnv() {
 }
 
 // Update in-memory store (and optionally .env file) from Set-Cookie response headers
-export async function refreshCookiesFromResponse(res) {
-  const setCookies = res.headers.getSetCookie?.() || [];
-  const updates = {};
-  for (const sc of setCookies) {
+export async function refreshCookiesFromResponse(res: Response) {
+  const setCookieHeaders = res.headers.getSetCookie?.() || [];
+  const updates: Record<string, string> = {};
+  for (const sc of setCookieHeaders) {
     const match = sc.match(/^(__Secure-1PSID[A-Z]*)=([^;]+)/);
     if (match) updates[match[1]] = match[2];
   }

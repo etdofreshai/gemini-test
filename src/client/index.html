@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gemini Image Generator</title>
+</head>
+<body>
+  <div id="auth-banner">
+    <span>Not authenticated.</span>
+    <button id="login-btn">Login with Google</button>
+  </div>
+
+  <div id="grid-area">
+    <div id="empty-state">Enter a prompt below to generate images</div>
+    <div id="image-grid"></div>
+  </div>
+
+  <div id="prompt-bar">
+    <div id="options-row">
+      <select id="aspect-ratio">
+        <option value="">Aspect Ratio</option>
+        <option value="1:1">1:1</option>
+        <option value="16:9">16:9</option>
+        <option value="9:16">9:16</option>
+        <option value="4:3">4:3</option>
+        <option value="3:4">3:4</option>
+        <option value="3:2">3:2</option>
+        <option value="2:3">2:3</option>
+      </select>
+    </div>
+    <div id="input-row">
+      <button id="file-btn">
+        <span>&#128206;</span>
+        <span id="file-count">0</span>
+      </button>
+      <input type="file" id="file-input" multiple accept="image/*">
+      <input type="text" id="prompt-input" placeholder="Describe the image you want to generate..." autocomplete="off">
+      <button id="submit-btn">&#10148;</button>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+
+  <script type="module" src="/main.ts"></script>
+</body>
+</html>
