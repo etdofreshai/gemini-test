@@ -78,7 +78,7 @@ router.post("/remote-login/start", async (_req, res) => {
 
   try {
     const browser = await puppeteer.launch({
-      headless: "new",
+      headless: "new" as any,
       args: [
         ...STEALTH_ARGS,
         "--enable-features=NetworkService,NetworkServiceInProcess",
