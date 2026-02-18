@@ -9,6 +9,7 @@ import { setCookies } from "../lib/cookies.js";
 const router = Router();
 
 const GEMINI_APP_URL = "https://gemini.google.com/app";
+const GOOGLE_LOGIN_URL = "https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fgemini.google.com%2Fapp";
 const SESSION_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 const VIEWPORT_WIDTH = 1280;
 const VIEWPORT_HEIGHT = 800;
@@ -18,9 +19,18 @@ const STEALTH_ARGS = [
   "--no-first-run",
   "--no-default-browser-check",
   "--disable-blink-features=AutomationControlled",
-  "--disable-features=AutomationControlled",
+  "--disable-features=AutomationControlled,IsolateOrigins,site-per-process",
   "--disable-dev-shm-usage",
+  "--disable-infobars",
+  "--window-size=1280,800",
+  "--lang=en-US,en",
+  "--disable-background-timer-throttling",
+  "--disable-backgrounding-occluded-windows",
+  "--disable-renderer-backgrounding",
 ];
+
+const REAL_USER_AGENT =
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 type SessionStatus = "running" | "success" | "timeout" | "error";
 
@@ -67,16 +77,38 @@ router.post("/remote-login/start", async (_req, res) => {
 
   try {
     const browser = await puppeteer.launch({
-      headless: true,
-      args: STEALTH_ARGS,
+      headless: "new",
+      args: [
+        ...STEALTH_ARGS,
+        "--enable-features=NetworkService,NetworkServiceInProcess",
+      ],
+      ignoreDefaultArgs: ["--enable-automation"],
     });
 
     const page = await browser.newPage();
     await page.setViewport({ width: VIEWPORT_WIDTH, height: VIEWPORT_HEIGHT });
+    await page.setUserAgent(REAL_USER_AGENT);
 
-    // Stealth patches
+    // Extra stealth patches beyond the plugin
     await page.evaluateOnNewDocument(() => {
+      // Override webdriver
       Object.defineProperty(navigator, "webdriver", { get: () => false });
+      // Override permissions
+      const originalQuery = window.navigator.permissions.query;
+      (window.navigator.permissions as any).query = (parameters: any) =>
+        parameters.name === "notifications"
+          ? Promise.resolve({ state: Notification.permission } as PermissionStatus)
+          : originalQuery(parameters);
+      // Override plugins to look real
+      Object.defineProperty(navigator, "plugins", {
+        get: () => [1, 2, 3, 4, 5],
+      });
+      // Override languages
+      Object.defineProperty(navigator, "languages", {
+        get: () => ["en-US", "en"],
+      });
+      // Chrome runtime
+      (window as any).chrome = { runtime: {} };
       delete (window as any).cdc_adoQpoasnfa76pfcZLmcfl_Array;
       delete (window as any).cdc_adoQpoasnfa76pfcZLmcfl_Promise;
       delete (window as any).cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
@@ -167,7 +199,7 @@ router.post("/remote-login/start", async (_req, res) => {
 
     // Navigate in background — don't await so the response is immediate
     page
-      .goto(GEMINI_APP_URL, { waitUntil: "networkidle2", timeout: 60000 })
+      .goto(GOOGLE_LOGIN_URL, { waitUntil: "networkidle2", timeout: 60000 })
       .then(() => {
         if (session && session.status === "running") {
           session.message =
