@@ -47,6 +47,25 @@ function closeSession() {
     .catch(() => {});
 }
 
+// Map of special key names → CDP key info
+const SPECIAL_KEY_MAP: Record<string, { code: string; keyCode: number; text?: string }> = {
+  Enter:     { code: "Enter",     keyCode: 13, text: "\r" },
+  Backspace: { code: "Backspace", keyCode: 8 },
+  Tab:       { code: "Tab",       keyCode: 9 },
+  Escape:    { code: "Escape",    keyCode: 27 },
+  Delete:    { code: "Delete",    keyCode: 46 },
+  ArrowUp:   { code: "ArrowUp",   keyCode: 38 },
+  ArrowDown: { code: "ArrowDown", keyCode: 40 },
+  ArrowLeft: { code: "ArrowLeft", keyCode: 37 },
+  ArrowRight:{ code: "ArrowRight",keyCode: 39 },
+  Home:      { code: "Home",      keyCode: 36 },
+  End:       { code: "End",       keyCode: 35 },
+  PageUp:    { code: "Prior",     keyCode: 33 },
+  PageDown:  { code: "Next",      keyCode: 34 },
+  F5:        { code: "F5",        keyCode: 116 },
+  F12:       { code: "F12",       keyCode: 123 },
+};
+
 // ── Routes ────────────────────────────────────────────────────────────────────
 
 // Serve self-contained HTML UI
@@ -159,7 +178,7 @@ export function handleRemoteLoginWs(req: IncomingMessage, socket: Socket, head: 
       cdpCommand("Network.enable");
       cdpCommand("Page.startScreencast", {
         format: "jpeg",
-        quality: 60,
+        quality: 85,
         maxWidth: VIEWPORT_WIDTH,
         maxHeight: VIEWPORT_HEIGHT,
       });
@@ -238,85 +257,45 @@ export function handleRemoteLoginWs(req: IncomingMessage, socket: Socket, head: 
           setTimeout(() => {
             cdpCommand("Input.dispatchMouseEvent", {
               type: "mousePressed",
-              x,
-              y,
+              x, y,
               button: "left",
               clickCount: 1,
             });
             setTimeout(() => {
               cdpCommand("Input.dispatchMouseEvent", {
                 type: "mouseReleased",
-                x,
-                y,
+                x, y,
                 button: "left",
                 clickCount: 1,
               });
             }, 50);
           }, 30);
         } else if (msg.type === "keydown") {
-          const key = msg.key;
-          if (key === "Enter") {
+          const key = msg.key as string;
+          const keyInfo = SPECIAL_KEY_MAP[key];
+          if (keyInfo) {
             cdpCommand("Input.dispatchKeyEvent", {
               type: "rawKeyDown",
-              key: "Enter",
-              code: "Enter",
-              windowsVirtualKeyCode: 13,
+              key,
+              code: keyInfo.code,
+              windowsVirtualKeyCode: keyInfo.keyCode,
             });
-            cdpCommand("Input.dispatchKeyEvent", { type: "char", text: "\r" });
+            if (keyInfo.text) {
+              cdpCommand("Input.dispatchKeyEvent", { type: "char", text: keyInfo.text });
+            }
             cdpCommand("Input.dispatchKeyEvent", {
               type: "keyUp",
-              key: "Enter",
-              code: "Enter",
-              windowsVirtualKeyCode: 13,
-            });
-          } else if (key === "Backspace") {
-            cdpCommand("Input.dispatchKeyEvent", {
-              type: "rawKeyDown",
-              key: "Backspace",
-              code: "Backspace",
-              windowsVirtualKeyCode: 8,
-            });
-            cdpCommand("Input.dispatchKeyEvent", {
-              type: "keyUp",
-              key: "Backspace",
-              code: "Backspace",
-              windowsVirtualKeyCode: 8,
-            });
-          } else if (key === "Tab") {
-            cdpCommand("Input.dispatchKeyEvent", {
-              type: "rawKeyDown",
-              key: "Tab",
-              code: "Tab",
-              windowsVirtualKeyCode: 9,
-            });
-            cdpCommand("Input.dispatchKeyEvent", {
-              type: "keyUp",
-              key: "Tab",
-              code: "Tab",
-              windowsVirtualKeyCode: 9,
-            });
-          } else if (key === "Escape") {
-            cdpCommand("Input.dispatchKeyEvent", {
-              type: "rawKeyDown",
-              key: "Escape",
-              code: "Escape",
-              windowsVirtualKeyCode: 27,
-            });
-            cdpCommand("Input.dispatchKeyEvent", {
-              type: "keyUp",
-              key: "Escape",
-              code: "Escape",
-              windowsVirtualKeyCode: 27,
+              key,
+              code: keyInfo.code,
+              windowsVirtualKeyCode: keyInfo.keyCode,
             });
           } else {
-            cdpCommand("Input.dispatchKeyEvent", {
-              type: "keyDown",
-              key,
-              text: key,
-            });
+            // Generic key (e.g. Ctrl+A, modifier combos)
+            cdpCommand("Input.dispatchKeyEvent", { type: "keyDown", key, text: key });
             cdpCommand("Input.dispatchKeyEvent", { type: "keyUp", key });
           }
         } else if (msg.type === "type") {
+          // Use insertText for regular printable characters — most reliable for text input
           cdpCommand("Input.insertText", { text: msg.text });
         }
       } catch {}
@@ -387,26 +366,43 @@ const REMOTE_LOGIN_HTML = /* html */ `<!DOCTYPE html>
 
   #canvas-wrap{
     width:100%;max-width:900px;position:relative;
-    background:#111;border:1px solid #333;border-radius:8px;overflow:hidden;
-    cursor:crosshair;
+    background:#111;border:2px solid #333;border-radius:8px;overflow:hidden;
+    cursor:pointer;outline:none;
+    transition:border-color .2s;
   }
-  #canvas-wrap.inactive{cursor:default}
+  #canvas-wrap.inactive{cursor:default;pointer-events:none}
+  #canvas-wrap.canvas-focused{border-color:#2563eb;box-shadow:0 0 0 2px rgba(37,99,235,.3)}
   #screen{
     display:block;width:100%;height:auto;user-select:none;
   }
   #placeholder{
     width:100%;aspect-ratio:16/10;display:flex;align-items:center;justify-content:center;
-    color:#555;font-size:1rem;position:absolute;inset:0;
+    color:#555;font-size:1rem;
   }
   #click-flash{
     position:absolute;pointer-events:none;border-radius:50%;
-    width:24px;height:24px;background:rgba(37,99,235,.6);transform:translate(-50%,-50%);
-    display:none;
+    width:28px;height:28px;
+    background:rgba(37,99,235,.5);
+    border:2px solid rgba(37,99,235,.9);
+    transform:translate(-50%,-50%) scale(0);
+    transition:transform .08s ease-out, opacity .35s ease-out;
+    opacity:0;
+  }
+  #click-flash.active{
+    transform:translate(-50%,-50%) scale(1);
+    opacity:1;
   }
   #overlay-msg{
     position:absolute;inset:0;display:none;align-items:center;justify-content:center;
     background:rgba(0,0,0,.7);font-size:1.3rem;font-weight:600;color:#fff;
   }
+  #focus-hint{
+    position:absolute;bottom:8px;left:50%;transform:translateX(-50%);
+    background:rgba(0,0,0,.6);color:#aaa;font-size:.75rem;
+    padding:3px 10px;border-radius:20px;pointer-events:none;
+    transition:opacity .3s;
+  }
+  #canvas-wrap.canvas-focused #focus-hint{ opacity:0; }
 </style>
 </head>
 <body>
@@ -421,8 +417,7 @@ const REMOTE_LOGIN_HTML = /* html */ `<!DOCTYPE html>
 <div class="controls">
   <button id="start-btn" onclick="startSession()">▶ Start Login</button>
   <button id="stop-btn" class="danger" onclick="stopSession()" disabled>■ Stop</button>
-  <input id="type-input" type="text" placeholder="Type text here…" onkeydown="onInputKey(event)"/>
-  <button id="type-btn" onclick="sendType()" disabled>⌨ Type</button>
+  <input id="type-input" type="text" placeholder="Paste or type text here then press Enter to send…" onkeydown="onInputKey(event)" oninput="onInputChange(event)"/>
   <div class="key-group">
     <button class="secondary" onclick="sendKey('Enter')" disabled id="key-enter">↵ Enter</button>
     <button class="secondary" onclick="sendKey('Tab')" disabled id="key-tab">⇥ Tab</button>
@@ -431,11 +426,12 @@ const REMOTE_LOGIN_HTML = /* html */ `<!DOCTYPE html>
   </div>
 </div>
 
-<div id="canvas-wrap" class="inactive" onclick="onCanvasClick(event)">
-  <canvas id="screen" width="${VIEWPORT_WIDTH}" height="${VIEWPORT_HEIGHT}"></canvas>
+<div id="canvas-wrap" class="inactive" tabindex="0">
+  <canvas id="screen"></canvas>
   <div id="placeholder">Screenshot will appear here after starting the session.</div>
   <div id="click-flash"></div>
   <div id="overlay-msg"></div>
+  <div id="focus-hint">Click to focus • keyboard input will be forwarded</div>
 </div>
 
 <script>
@@ -445,10 +441,23 @@ let sessionActive = false;
 let startTime = null;
 let timerInterval = null;
 let hasFirstFrame = false;
+let canvasFocused = false;
+
+// Frame metadata for proper coordinate mapping
+let frameDeviceWidth = ${VIEWPORT_WIDTH};
+let frameDeviceHeight = ${VIEWPORT_HEIGHT};
+let frameOffsetTop = 0;
+let framePageScale = 1;
 
 const canvas = document.getElementById('screen');
 const ctx = canvas.getContext('2d');
 const placeholder = document.getElementById('placeholder');
+const canvasWrap = document.getElementById('canvas-wrap');
+const clickFlash = document.getElementById('click-flash');
+
+// Set initial canvas size
+canvas.width = ${VIEWPORT_WIDTH};
+canvas.height = ${VIEWPORT_HEIGHT};
 
 function setStatus(text, dotClass) {
   document.getElementById('status-text').textContent = text;
@@ -459,11 +468,14 @@ function setStatus(text, dotClass) {
 function setControlsEnabled(enabled) {
   sessionActive = enabled;
   document.getElementById('stop-btn').disabled = !enabled;
-  document.getElementById('type-btn').disabled = !enabled;
   ['key-enter','key-tab','key-bs','key-esc'].forEach(id => {
     document.getElementById(id).disabled = !enabled;
   });
-  document.getElementById('canvas-wrap').classList.toggle('inactive', !enabled);
+  canvasWrap.classList.toggle('inactive', !enabled);
+  if (!enabled) {
+    canvasFocused = false;
+    canvasWrap.classList.remove('canvas-focused');
+  }
 }
 
 function startTimer() {
@@ -502,13 +514,26 @@ function connectWs() {
       const msg = JSON.parse(event.data);
 
       if (msg.type === 'frame') {
-        // Draw JPEG frame onto canvas
+        // Update metadata for coordinate mapping
+        if (msg.metadata) {
+          frameDeviceWidth = msg.metadata.deviceWidth || ${VIEWPORT_WIDTH};
+          frameDeviceHeight = msg.metadata.deviceHeight || ${VIEWPORT_HEIGHT};
+          frameOffsetTop = msg.metadata.offsetTop || 0;
+          framePageScale = msg.metadata.pageScaleFactor || 1;
+        }
+
         const img = new Image();
         img.onload = () => {
-          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          // Dynamically resize canvas to match actual frame dimensions
+          if (canvas.width !== img.naturalWidth || canvas.height !== img.naturalHeight) {
+            canvas.width = img.naturalWidth;
+            canvas.height = img.naturalHeight;
+          }
+          ctx.drawImage(img, 0, 0);
           if (!hasFirstFrame) {
             hasFirstFrame = true;
             placeholder.style.display = 'none';
+            canvas.style.display = 'block';
           }
         };
         img.src = 'data:image/jpeg;base64,' + msg.data;
@@ -536,6 +561,9 @@ function connectWs() {
 async function startSession() {
   document.getElementById('start-btn').disabled = true;
   hasFirstFrame = false;
+  canvas.style.display = 'none';
+  placeholder.style.display = 'flex';
+  placeholder.textContent = 'Starting browser…';
   setStatus('Starting browser…', 'running');
   try {
     const r = await fetch(BASE + '/remote-login/start', { method: 'POST' });
@@ -544,15 +572,14 @@ async function startSession() {
     setStatus('Browser started. Connecting to screencast…', 'running');
     setControlsEnabled(true);
     startTimer();
-    // Small delay to ensure session is ready before WS connect
     setTimeout(() => {
       connectWs();
-      // Poll status for timeout/error detection
       startStatusPolling();
     }, 500);
   } catch(e) {
     setStatus('Error: ' + e.message, 'error');
     document.getElementById('start-btn').disabled = false;
+    placeholder.textContent = 'Failed to start. Try again.';
   }
 }
 
@@ -565,6 +592,7 @@ async function stopSession() {
   setStatus('Session stopped.', '');
   document.getElementById('start-btn').disabled = false;
   hasFirstFrame = false;
+  canvas.style.display = 'none';
   placeholder.style.display = 'flex';
   placeholder.textContent = 'Session stopped.';
 }
@@ -575,10 +603,7 @@ function startStatusPolling() {
     try {
       const r = await fetch(BASE + '/remote-login/status');
       const data = await r.json();
-      if (data.status === 'success') {
-        stopStatusPolling();
-        // success handled by WS message
-      } else if (data.status === 'timeout') {
+      if (data.status === 'timeout') {
         stopStatusPolling();
         stopTimer();
         setStatus(data.message, 'timeout');
@@ -593,11 +618,8 @@ function startStatusPolling() {
         setControlsEnabled(false);
         document.getElementById('start-btn').disabled = false;
         if (ws) { try { ws.close(); } catch {} ws = null; }
-      } else if (data.status === 'running') {
-        // Update message but don't override active status
-        if (sessionActive) {
-          setStatus(data.message || 'Browser running…', 'running');
-        }
+      } else if (data.status === 'running' && sessionActive) {
+        // Keep status alive
       }
     } catch {}
   }, 3000);
@@ -613,32 +635,92 @@ function showOverlay(msg) {
   o.style.display = 'flex';
 }
 
-function onCanvasClick(event) {
+// ── Canvas click handler ─────────────────────────────────────────────────────
+canvasWrap.addEventListener('click', (event) => {
   if (!sessionActive || !ws || ws.readyState !== WebSocket.OPEN) return;
 
+  // Set canvas focused for keyboard input
+  if (!canvasFocused) {
+    canvasFocused = true;
+    canvasWrap.classList.add('canvas-focused');
+    canvasWrap.focus();
+  }
+
   const rect = canvas.getBoundingClientRect();
-  const relX = event.clientX - rect.left;
-  const relY = event.clientY - rect.top;
+  const relX = (event.clientX - rect.left) / rect.width;
+  const relY = (event.clientY - rect.top) / rect.height;
 
-  // Map CSS pixels → viewport pixels (1280×${VIEWPORT_HEIGHT})
-  const scaleX = canvas.width / rect.width;
-  const scaleY = canvas.height / rect.height;
-  const bx = Math.round(relX * scaleX);
-  const by = Math.round(relY * scaleY);
+  // Map CSS pixels → actual browser viewport pixels using frame metadata
+  const bx = Math.round(relX * frameDeviceWidth / framePageScale);
+  const by = Math.round(relY * frameDeviceHeight / framePageScale + frameOffsetTop);
 
-  // Show click flash
-  const wrap = document.getElementById('canvas-wrap');
-  const wrapRect = wrap.getBoundingClientRect();
-  const flash = document.getElementById('click-flash');
-  flash.style.left = (event.clientX - wrapRect.left) + 'px';
-  flash.style.top = (event.clientY - wrapRect.top) + 'px';
-  flash.style.display = 'block';
-  setTimeout(() => { flash.style.display = 'none'; }, 400);
+  // Show click flash animation
+  const wrapRect = canvasWrap.getBoundingClientRect();
+  clickFlash.style.left = (event.clientX - wrapRect.left) + 'px';
+  clickFlash.style.top = (event.clientY - wrapRect.top) + 'px';
+  clickFlash.classList.add('active');
+  setTimeout(() => { clickFlash.classList.remove('active'); }, 400);
 
   ws.send(JSON.stringify({ type: 'click', x: bx, y: by }));
+});
+
+// Defocus canvas when clicking outside
+document.addEventListener('click', (event) => {
+  if (!canvasWrap.contains(event.target) && canvasFocused) {
+    canvasFocused = false;
+    canvasWrap.classList.remove('canvas-focused');
+  }
+});
+
+// ── Keyboard handling ────────────────────────────────────────────────────────
+// Special keys that need rawKeyDown treatment
+const SPECIAL_KEYS = new Set([
+  'Enter', 'Backspace', 'Tab', 'Escape', 'Delete',
+  'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+  'Home', 'End', 'PageUp', 'PageDown', 'F5', 'F12',
+]);
+
+document.addEventListener('keydown', (event) => {
+  if (!sessionActive || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+  // Let the type-input field handle its own keys normally
+  if (document.activeElement === document.getElementById('type-input')) return;
+
+  // Forward all keyboard events when not in the type bar
+  event.preventDefault();
+
+  if (SPECIAL_KEYS.has(event.key)) {
+    ws.send(JSON.stringify({ type: 'keydown', key: event.key }));
+  } else if (event.key.length === 1) {
+    if (event.ctrlKey || event.metaKey) {
+      // Ctrl/Cmd combos (Ctrl+A, Ctrl+C etc.) — send as keydown for browser to handle
+      ws.send(JSON.stringify({ type: 'keydown', key: event.key }));
+    } else {
+      // Regular printable character — use insertText for reliable text entry
+      ws.send(JSON.stringify({ type: 'type', text: event.key }));
+    }
+  }
+});
+
+// ── Type bar handling ────────────────────────────────────────────────────────
+// Send text on Enter key in type bar
+function onInputKey(event) {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    sendTypeBarText();
+  }
 }
 
-function sendType() {
+// Optional: auto-send on paste (after a short delay to capture the pasted content)
+function onInputChange(event) {
+  // If text was pasted (longer than a single char added), auto-send after short delay
+  const input = event.target;
+  if (input.value.length > 1 && event.inputType === 'insertFromPaste') {
+    setTimeout(() => sendTypeBarText(), 50);
+  }
+}
+
+function sendTypeBarText() {
   const input = document.getElementById('type-input');
   const text = input.value;
   if (!text || !sessionActive || !ws || ws.readyState !== WebSocket.OPEN) return;
@@ -650,25 +732,6 @@ function sendKey(key) {
   if (!sessionActive || !ws || ws.readyState !== WebSocket.OPEN) return;
   ws.send(JSON.stringify({ type: 'keydown', key }));
 }
-
-function onInputKey(event) {
-  if (event.key === 'Enter') {
-    event.preventDefault();
-    sendType();
-  }
-}
-
-// Allow keyboard typing when canvas is focused
-document.addEventListener('keydown', (event) => {
-  if (!sessionActive || !ws || ws.readyState !== WebSocket.OPEN) return;
-  // Don't intercept when typing in the input field
-  if (document.activeElement === document.getElementById('type-input')) return;
-  const specialKeys = ['Enter', 'Tab', 'Backspace', 'Escape', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
-  if (specialKeys.includes(event.key)) {
-    event.preventDefault();
-    ws.send(JSON.stringify({ type: 'keydown', key: event.key }));
-  }
-});
 </script>
 </body>
 </html>`;

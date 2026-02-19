@@ -14,8 +14,10 @@ import {
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage() });
-const TMP_DIR = path.join(process.cwd(), "tmp");
-fs.mkdirSync(TMP_DIR, { recursive: true });
+
+// Store generated images in .chrome-profile/.generated-images/
+const IMAGES_DIR = path.join(process.cwd(), ".chrome-profile", ".generated-images");
+fs.mkdirSync(IMAGES_DIR, { recursive: true });
 
 // Middleware to ensure cookies are available
 async function ensureAuth(_req: any, res: any, next: any) {
@@ -29,6 +31,75 @@ async function ensureAuth(_req: any, res: any, next: any) {
   }
   next();
 }
+
+// GET /api/images — list all stored images
+router.get("/images", (_req, res) => {
+  try {
+    const files = fs.readdirSync(IMAGES_DIR);
+    const images = files
+      .filter((f) => /\.(png|jpg|jpeg|webp)$/i.test(f))
+      .map((f) => {
+        const stat = fs.statSync(path.join(IMAGES_DIR, f));
+        return {
+          filename: f,
+          url: `/images/${f}`,
+          bytes: stat.size,
+          createdAt: stat.birthtimeMs || stat.mtimeMs,
+        };
+      })
+      .sort((a, b) => b.createdAt - a.createdAt); // newest first
+    res.json({ images });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    res.status(500).json({ error: message });
+  }
+});
+
+// DELETE /api/images/:filename — delete a single image
+router.delete("/images/:filename", (req, res) => {
+  try {
+    const filename = path.basename(req.params.filename); // prevent path traversal
+    const filePath = path.join(IMAGES_DIR, filename);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "File not found" });
+    }
+    fs.unlinkSync(filePath);
+    res.json({ success: true, deleted: filename });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    res.status(500).json({ error: message });
+  }
+});
+
+// DELETE /api/images — bulk delete images
+router.delete("/images", (req, res) => {
+  try {
+    const { filenames } = req.body || {};
+    if (!Array.isArray(filenames) || filenames.length === 0) {
+      return res.status(400).json({ error: "Missing filenames array" });
+    }
+    const deleted: string[] = [];
+    const errors: string[] = [];
+    for (const raw of filenames) {
+      const filename = path.basename(String(raw)); // prevent path traversal
+      const filePath = path.join(IMAGES_DIR, filename);
+      try {
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+          deleted.push(filename);
+        } else {
+          errors.push(`${filename}: not found`);
+        }
+      } catch (e: unknown) {
+        errors.push(`${filename}: ${e instanceof Error ? e.message : "error"}`);
+      }
+    }
+    res.json({ success: true, deleted, errors });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    res.status(500).json({ error: message });
+  }
+});
 
 // POST /api/generate — generate images (always returns 1K previews)
 router.post("/generate", upload.array("images", 10), ensureAuth, async (req, res) => {
@@ -53,7 +124,7 @@ router.post("/generate", upload.array("images", 10), ensureAuth, async (req, res
 
     const result = await generateImages(prompt, imageBuffers);
 
-    // Download only PNG images as 1K previews, save to tmp/
+    // Download only PNG images as 1K previews, save to IMAGES_DIR
     const pngImages = result.images.filter((img) => img.mime === "image/png");
     const images = [];
     for (const img of pngImages) {
@@ -62,12 +133,13 @@ router.post("/generate", upload.array("images", 10), ensureAuth, async (req, res
         const id = crypto.randomUUID();
         const ext = img.mime === "image/png" ? ".png" : ".jpg";
         const savedName = `${id}${ext}`;
-        fs.writeFileSync(path.join(TMP_DIR, savedName), buf);
+        fs.writeFileSync(path.join(IMAGES_DIR, savedName), buf);
         images.push({
           filename: img.filename,
           mime: img.mime,
           dimensions: img.dimensions,
-          url: `/tmp/${savedName}`,
+          url: `/images/${savedName}`,
+          savedName,
           imageToken: img.imageToken,
           responseChunkId: img.responseChunkId,
         });
@@ -122,9 +194,10 @@ router.post("/upscale", ensureAuth, async (req, res) => {
     const buf = await downloadImageToBuffer(fullSizeUrl);
     const id = crypto.randomUUID();
     const savedName = `${id}.png`;
-    fs.writeFileSync(path.join(TMP_DIR, savedName), buf);
+    fs.writeFileSync(path.join(IMAGES_DIR, savedName), buf);
     res.json({
-      url: `/tmp/${savedName}`,
+      url: `/images/${savedName}`,
+      savedName,
       mime: "image/png",
       bytes: buf.length,
     });

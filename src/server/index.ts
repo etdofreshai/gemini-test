@@ -14,8 +14,8 @@ loadFromEnv();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 
-// Serve saved images from tmp/
-app.use("/tmp", express.static(path.join(process.cwd(), "tmp")));
+// Serve generated images from .chrome-profile/.generated-images/
+app.use("/images", express.static(path.join(process.cwd(), ".chrome-profile", ".generated-images")));
 
 // In production, serve the built Vite frontend
 const clientDir = path.join(__dirname, "..", "client");

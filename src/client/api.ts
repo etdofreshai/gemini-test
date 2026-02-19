@@ -8,6 +8,7 @@ export interface GeneratedImage {
   mime: string;
   dimensions: number[] | null;
   url: string;
+  savedName?: string;
   imageToken: string | null;
   responseChunkId: string | null;
 }
@@ -24,8 +25,16 @@ export interface GenerateResult {
 
 export interface UpscaleResult {
   url: string;
+  savedName?: string;
   mime: string;
   bytes: number;
+}
+
+export interface StoredImage {
+  filename: string;
+  url: string;
+  bytes: number;
+  createdAt: number;
 }
 
 export async function checkAuth(): Promise<AuthStatus> {
@@ -79,5 +88,31 @@ export async function upscale(params: {
   if (!res.ok) {
     throw new Error(data.error || `Error ${res.status}`);
   }
+  return data;
+}
+
+export async function listImages(): Promise<{ images: StoredImage[] }> {
+  const res = await fetch("/api/images");
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+  return data;
+}
+
+export async function deleteImage(filename: string): Promise<void> {
+  const res = await fetch(`/api/images/${encodeURIComponent(filename)}`, {
+    method: "DELETE",
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+}
+
+export async function deleteImages(filenames: string[]): Promise<{ deleted: string[]; errors: string[] }> {
+  const res = await fetch("/api/images", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filenames }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
   return data;
 }
