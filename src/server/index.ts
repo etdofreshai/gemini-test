@@ -22,7 +22,8 @@ const clientDir = path.join(__dirname, "..", "client");
 app.use(express.static(clientDir));
 
 // Parse JSON request bodies
-app.use(express.json());
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
 // API routes
 app.use("/api", authRouter);
@@ -34,6 +35,23 @@ app.use("/auth", remoteLoginRouter);
 // SPA fallback — serve index.html for unmatched GET routes
 app.get("*", (_req, res) => {
   res.sendFile(path.join(clientDir, "index.html"));
+});
+
+// Global error handler
+app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  // Handle multer errors
+  if (err.message?.includes("File too large")) {
+    return res.status(413).json({ error: "File too large. Maximum size is 10MB per file." });
+  }
+  if (err.message?.includes("Invalid file type")) {
+    return res.status(400).json({ error: err.message });
+  }
+  if (err.message?.includes("Unexpected field")) {
+    return res.status(400).json({ error: "Too many files. Maximum is 10 files." });
+  }
+  
+  console.error("Unhandled error:", err);
+  res.status(500).json({ error: "Internal server error" });
 });
 
 // Create HTTP server to handle WebSocket upgrades

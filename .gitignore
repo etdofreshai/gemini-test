@@ -1,8 +1,26 @@
+# Dependencies
 node_modules/
+
+# Environment
 .env
+.env.local
+.env.*.local
+
+# Build output
+dist/
+
+# Chrome profile (contains session data)
+.chrome-profile/
+
+# Debug files
 output/
 debug_response.txt
 *.har
-.chrome-profile/
-dist/
+
+# Test coverage
+coverage/
+
+# Temporary files
 tmp/
+*.tmp
+*.log

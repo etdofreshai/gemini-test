@@ -6,7 +6,12 @@
   "scripts": {
     "dev": "concurrently -n api,client -c blue,green \"tsx watch src/server/index.ts\" \"vite\"",
     "build": "tsc -p tsconfig.server.json && vite build",
-    "start": "node dist/server/index.js"
+    "start": "node dist/server/index.js",
+    "lint": "eslint src/server",
+    "lint:fix": "eslint src/server --fix",
+    "test": "npm run build && vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.server.json --noEmit"
   },
   "dependencies": {
     "dotenv": "^16.4.7",
@@ -16,14 +21,21 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.3",
     "@types/express": "^5.0.0",
     "@types/mime-types": "^2.1.4",
     "@types/multer": "^1.4.12",
     "@types/node": "^22.13.4",
     "@types/ws": "^8.5.10",
     "concurrently": "^9.1.2",
+    "eslint": "^9.39.3",
     "tsx": "^4.19.3",
     "typescript": "^5.7.3",
-    "vite": "^6.1.0"
+    "typescript-eslint": "^8.56.1",
+    "vite": "^6.1.0",
+    "vitest": "^3.0.5"
+  },
+  "optionalDependencies": {
+    "@rollup/rollup-linux-x64-gnu": "^4.59.0"
   }
 }
