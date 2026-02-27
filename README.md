@@ -168,8 +168,8 @@ curl -X POST http://localhost:3000/api/generate \
       "dimensions": [1024, 576],
       "url": "/images/uuid-here.png",
       "savedName": "uuid-here.png",
-      "imageToken": "abc123...",
-      "responseChunkId": "rc_xyz..."
+      "upscaleId": "550e8400-e29b-41d4-a716-446655440000",
+      "upscaleLink": "/api/upscale-link/550e8400-e29b-41d4-a716-446655440000"
     }
   ],
   "metadata": {
@@ -180,6 +180,8 @@ curl -X POST http://localhost:3000/api/generate \
   }
 }
 ```
+
+**Note:** The `upscaleId` is a server-stored token that references the upscale metadata. It does not expose sensitive tokens like `imageToken` or `responseChunkId`. Upscale links are valid for 24 hours.
 
 **Errors:**
 
@@ -195,14 +197,16 @@ curl -X POST http://localhost:3000/api/generate \
 
 ---
 
-### Upscale Image
+### Upscale Image (Programmatic)
 
 ```http
 POST /api/upscale
 Content-Type: application/json
 ```
 
-Download a full-resolution (2K) version of a generated image.
+Download a full-resolution (2K) version of a generated image. Requires the original tokens from the generate response.
+
+**Note:** For most use cases, prefer the one-click upscale link (`upscaleLink`) returned in the generate response instead of this endpoint.
 
 **Parameters:**
 
@@ -234,6 +238,46 @@ Download a full-resolution (2K) version of a generated image.
   "bytes": 2456789
 }
 ```
+
+---
+
+### One-Click Upscale Link (Recommended)
+
+```http
+GET /api/upscale-link/:id
+```
+
+Perform a one-click upscale using a server-stored token. This is the recommended way to upscale images as it doesn't require storing or passing sensitive tokens.
+
+**Parameters:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | ✅ | Upscale token from generate response (`upscaleId`) |
+
+**Response:**
+
+On success, returns a `302 Found` redirect to the upscaled image URL.
+
+**Example:**
+```bash
+# One-click upscale - redirects to image
+curl -L http://localhost:3000/api/upscale-link/550e8400-e29b-41d4-a716-446655440000
+```
+
+**Errors:**
+
+| Code | Message | Code |
+|------|---------|------|
+| 400 | Invalid upscale link ID format | - |
+| 404 | Upscale link not found or expired. Links are valid for 24 hours. | `UPSCALE_LINK_EXPIRED` |
+| 401 | Not authenticated. Call GET /api/login first. | - |
+| 500 | Generation error (see message for details) | - |
+
+**Upscale Link Features:**
+- **TTL**: Links expire after 24 hours
+- **Capacity**: Maximum 1000 pending upscale links (LRU eviction)
+- **Security**: Internal tokens are never exposed to clients
 
 ---
 

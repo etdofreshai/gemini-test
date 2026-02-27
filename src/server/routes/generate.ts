@@ -11,6 +11,8 @@ import {
   requestFullSizeUrl,
   getSessionTokens,
 } from "../lib/gemini.js";
+import { upscaleStore } from "../lib/upscale-store.js";
+import { getImageMetaStore } from "../lib/image-meta-store.js";
 
 const router = Router();
 
@@ -69,15 +71,19 @@ function validateAspectRatio(aspectRatio: unknown): { valid: boolean; value?: st
 router.get("/images", (_req, res) => {
   try {
     const files = fs.readdirSync(IMAGES_DIR);
+    const metaStore = getImageMetaStore(IMAGES_DIR);
     const images = files
       .filter((f) => /\.(png|jpg|jpeg|webp)$/i.test(f))
       .map((f) => {
         const stat = fs.statSync(path.join(IMAGES_DIR, f));
+        const meta = metaStore.get(f);
         return {
           filename: f,
           url: `/images/${f}`,
           bytes: stat.size,
           createdAt: stat.birthtimeMs || stat.mtimeMs,
+          prompt: meta?.prompt,
+          aspectRatio: meta?.aspectRatio,
         };
       })
       .sort((a, b) => b.createdAt - a.createdAt); // newest first
@@ -202,8 +208,47 @@ router.post("/generate", upload.array("images", MAX_FILES), async (req, res) => 
       }
     }
 
+    const imagesWithUpscale = images.map((img) => {
+      // Only create upscale link if we have all required metadata
+      // (imageToken, responseChunkId, conversationId, responseId)
+      const hasAllMetadata = 
+        img.imageToken != null &&
+        img.responseChunkId != null &&
+        result.conversationId != null &&
+        result.responseId != null;
+      
+      if (hasAllMetadata) {
+        // Store upscale metadata server-side and return a clean token
+        const upscaleId = upscaleStore.storeMetadata({
+          imageToken: img.imageToken!,
+          responseChunkId: img.responseChunkId!,
+          conversationId: result.conversationId!,
+          responseId: result.responseId!,
+          prompt: rawPrompt,
+        });
+        return {
+          filename: img.filename,
+          mime: img.mime,
+          dimensions: img.dimensions,
+          url: img.url,
+          savedName: img.savedName,
+          upscaleId,
+          upscaleLink: `/api/upscale-link/${upscaleId}`,
+        };
+      }
+      
+      // No upscale link available (missing metadata)
+      return {
+        filename: img.filename,
+        mime: img.mime,
+        dimensions: img.dimensions,
+        url: img.url,
+        savedName: img.savedName,
+      };
+    });
+
     res.json({
-      images,
+      images: imagesWithUpscale,
       metadata: {
         conversationId: result.conversationId,
         responseId: result.responseId,
@@ -218,25 +263,69 @@ router.post("/generate", upload.array("images", MAX_FILES), async (req, res) => 
   }
 });
 
-// POST /api/upscale — download full-size (2K) image via c8o8Fe RPC
-router.post("/upscale", async (req, res) => {
-  const { imageToken, responseChunkId, conversationId, responseId, prompt } =
-    req.body || {};
+type UpscaleRequest = {
+  imageToken: string;
+  responseChunkId: string;
+  conversationId: string;
+  responseId: string;
+  prompt?: string;
+};
 
-  // Validate required fields FIRST (before auth) for better UX
+function validateUpscaleInput(input: any): { valid: boolean; error?: string; data?: UpscaleRequest } {
+  const { imageToken, responseChunkId, conversationId, responseId, prompt } = input || {};
   const missing: string[] = [];
   if (!imageToken || typeof imageToken !== "string") missing.push("imageToken");
   if (!responseChunkId || typeof responseChunkId !== "string") missing.push("responseChunkId");
   if (!conversationId || typeof conversationId !== "string") missing.push("conversationId");
   if (!responseId || typeof responseId !== "string") missing.push("responseId");
-  
+
   if (missing.length > 0) {
-    return res.status(400).json({ 
-      error: `Missing or invalid fields: ${missing.join(", ")}` 
-    });
+    return { valid: false, error: `Missing or invalid fields: ${missing.join(", ")}` };
   }
 
-  // Now check auth
+  return {
+    valid: true,
+    data: {
+      imageToken,
+      responseChunkId,
+      conversationId,
+      responseId,
+      prompt: typeof prompt === "string" ? prompt : "",
+    },
+  };
+}
+
+async function runUpscale(data: UpscaleRequest) {
+  const tokens = await getSessionTokens();
+  const fullSizeUrl = await requestFullSizeUrl(
+    {
+      url: "",
+      filename: "upscale",
+      mime: "image/png",
+      dimensions: null,
+      imageToken: data.imageToken,
+      responseChunkId: data.responseChunkId,
+    },
+    data.prompt || "",
+    data.conversationId,
+    data.responseId,
+    tokens
+  );
+
+  const buf = await downloadImageToBuffer(fullSizeUrl);
+  const id = crypto.randomUUID();
+  const savedName = `${id}.png`;
+  fs.writeFileSync(path.join(IMAGES_DIR, savedName), buf);
+  return { url: `/images/${savedName}`, savedName, mime: "image/png", bytes: buf.length };
+}
+
+// POST /api/upscale — download full-size (2K) image via c8o8Fe RPC
+router.post("/upscale", async (req, res) => {
+  const validation = validateUpscaleInput(req.body);
+  if (!validation.valid || !validation.data) {
+    return res.status(400).json({ error: validation.error });
+  }
+
   if (!hasCookies()) {
     const restored = await tryRestoreSession();
     if (!restored) {
@@ -245,36 +334,91 @@ router.post("/upscale", async (req, res) => {
   }
 
   try {
-    const tokens = await getSessionTokens();
-    const fullSizeUrl = await requestFullSizeUrl(
-      {
-        url: "",
-        filename: "upscale",
-        mime: "image/png",
-        dimensions: null,
-        imageToken,
-        responseChunkId,
-      },
-      (typeof prompt === "string" ? prompt : "") || "",
-      conversationId,
-      responseId,
-      tokens
-    );
-
-    const buf = await downloadImageToBuffer(fullSizeUrl);
-    const id = crypto.randomUUID();
-    const savedName = `${id}.png`;
-    fs.writeFileSync(path.join(IMAGES_DIR, savedName), buf);
-    res.json({
-      url: `/images/${savedName}`,
-      savedName,
-      mime: "image/png",
-      bytes: buf.length,
-    });
+    const result = await runUpscale(validation.data);
+    res.json(result);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
     console.error("Upscale error:", message);
     res.status(500).json({ error: message });
+  }
+});
+
+// GET /api/upscale-link/:id — one-click upscale using server-stored metadata
+router.get("/upscale-link/:id", async (req, res) => {
+  const { id } = req.params;
+  
+  // Validate ID format (should be a UUID)
+  if (!id || typeof id !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    return res.status(400).json({ error: "Invalid upscale link ID format" });
+  }
+
+  // Look up metadata from store
+  const metadata = upscaleStore.getMetadata(id);
+  if (!metadata) {
+    return res.status(404).json({ 
+      error: "Upscale link not found or expired. Links are valid for 24 hours.",
+      code: "UPSCALE_LINK_EXPIRED"
+    });
+  }
+
+  // Check auth
+  if (!hasCookies()) {
+    const restored = await tryRestoreSession();
+    if (!restored) {
+      return res.status(401).json({ error: "Not authenticated. Call GET /api/login first." });
+    }
+  }
+
+  try {
+    const result = await runUpscale({
+      imageToken: metadata.imageToken,
+      responseChunkId: metadata.responseChunkId,
+      conversationId: metadata.conversationId,
+      responseId: metadata.responseId,
+      prompt: metadata.prompt,
+    });
+    
+    // Optionally delete the token after successful use (one-time use)
+    // upscaleStore.delete(id);
+    
+    return res.redirect(302, result.url);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error("Upscale link error:", message);
+    return res.status(500).json({ error: message });
+  }
+});
+
+// GET /api/upscale/direct/:payload — legacy one-click upscale (DEPRECATED)
+// Kept for backwards compatibility with older clients
+router.get("/upscale/direct/:payload", async (req, res) => {
+  let decoded: any;
+  try {
+    const raw = Buffer.from(req.params.payload, "base64url").toString("utf8");
+    decoded = JSON.parse(raw);
+  } catch {
+    return res.status(400).json({ error: "Invalid upscale payload" });
+  }
+
+  const validation = validateUpscaleInput(decoded);
+  if (!validation.valid || !validation.data) {
+    return res.status(400).json({ error: validation.error });
+  }
+
+  if (!hasCookies()) {
+    const restored = await tryRestoreSession();
+    if (!restored) {
+      return res.status(401).json({ error: "Not authenticated. Call GET /api/login first." });
+    }
+  }
+
+  try {
+    const result = await runUpscale(validation.data);
+    return res.redirect(302, result.url);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error("Upscale direct error:", message);
+    return res.status(500).json({ error: message });
   }
 });
 

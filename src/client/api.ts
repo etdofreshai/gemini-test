@@ -9,8 +9,8 @@ export interface GeneratedImage {
   dimensions: number[] | null;
   url: string;
   savedName?: string;
-  imageToken: string | null;
-  responseChunkId: string | null;
+  upscaleId?: string;
+  upscaleLink?: string;
 }
 
 export interface GenerateResult {
@@ -89,6 +89,38 @@ export async function upscale(params: {
     throw new Error(data.error || `Error ${res.status}`);
   }
   return data;
+}
+
+/**
+ * Get the upscale link URL for a given upscale ID.
+ * The link performs the upscale and redirects to the result image.
+ */
+export function getUpscaleLinkUrl(upscaleId: string): string {
+  return `/api/upscale-link/${upscaleId}`;
+}
+
+/**
+ * Perform a one-click upscale using a server-stored token.
+ * Returns the redirect URL to the upscaled image.
+ */
+export async function upscaleByLink(upscaleId: string): Promise<string> {
+  const res = await fetch(`/api/upscale-link/${upscaleId}`, {
+    redirect: "manual", // Don't follow redirects automatically
+  });
+  
+  if (res.status === 302) {
+    const location = res.headers.get("location");
+    if (location) {
+      return location;
+    }
+  }
+  
+  const data = await res.json().catch(() => ({ error: `Error ${res.status}` }));
+  if (!res.ok) {
+    throw new Error(data.error || `Error ${res.status}`);
+  }
+  
+  throw new Error("Unexpected response from upscale endpoint");
 }
 
 export async function listImages(): Promise<{ images: StoredImage[] }> {
