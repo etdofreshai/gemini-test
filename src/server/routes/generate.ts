@@ -103,6 +103,9 @@ router.delete("/images/:filename", (req, res) => {
       return res.status(404).json({ error: "File not found" });
     }
     fs.unlinkSync(filePath);
+    // Also delete metadata
+    const metaStore = getImageMetaStore(IMAGES_DIR);
+    metaStore.delete(filename);
     res.json({ success: true, deleted: filename });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
@@ -132,6 +135,11 @@ router.delete("/images", (req, res) => {
       } catch (e: unknown) {
         errors.push(`${filename}: ${e instanceof Error ? e.message : "error"}`);
       }
+    }
+    // Also delete metadata for deleted files
+    if (deleted.length > 0) {
+      const metaStore = getImageMetaStore(IMAGES_DIR);
+      metaStore.deleteMany(deleted);
     }
     res.json({ success: true, deleted, errors });
   } catch (err: unknown) {
@@ -186,6 +194,7 @@ router.post("/generate", upload.array("images", MAX_FILES), async (req, res) => 
     // Download only PNG images as 1K previews, save to IMAGES_DIR
     const pngImages = result.images.filter((img) => img.mime === "image/png");
     const images = [];
+    const metaStore = getImageMetaStore(IMAGES_DIR);
     for (const img of pngImages) {
       try {
         const buf = await downloadImageToBuffer(img.url);
@@ -193,6 +202,12 @@ router.post("/generate", upload.array("images", MAX_FILES), async (req, res) => 
         const ext = img.mime === "image/png" ? ".png" : ".jpg";
         const savedName = `${id}${ext}`;
         fs.writeFileSync(path.join(IMAGES_DIR, savedName), buf);
+        // Store prompt and aspect ratio metadata
+        metaStore.set(savedName, {
+          prompt: rawPrompt,
+          aspectRatio: aspectValidation.value,
+          createdAt: Date.now(),
+        });
         images.push({
           filename: img.filename,
           mime: img.mime,
@@ -225,6 +240,7 @@ router.post("/generate", upload.array("images", MAX_FILES), async (req, res) => 
           conversationId: result.conversationId!,
           responseId: result.responseId!,
           prompt: rawPrompt,
+          aspectRatio: aspectValidation.value,
         });
         return {
           filename: img.filename,
@@ -234,6 +250,8 @@ router.post("/generate", upload.array("images", MAX_FILES), async (req, res) => 
           savedName: img.savedName,
           upscaleId,
           upscaleLink: `/api/upscale-link/${upscaleId}`,
+          prompt: rawPrompt,
+          aspectRatio: aspectValidation.value,
         };
       }
       
@@ -244,6 +262,8 @@ router.post("/generate", upload.array("images", MAX_FILES), async (req, res) => 
         dimensions: img.dimensions,
         url: img.url,
         savedName: img.savedName,
+        prompt: rawPrompt,
+        aspectRatio: aspectValidation.value,
       };
     });
 
@@ -269,10 +289,11 @@ type UpscaleRequest = {
   conversationId: string;
   responseId: string;
   prompt?: string;
+  aspectRatio?: string;
 };
 
 function validateUpscaleInput(input: any): { valid: boolean; error?: string; data?: UpscaleRequest } {
-  const { imageToken, responseChunkId, conversationId, responseId, prompt } = input || {};
+  const { imageToken, responseChunkId, conversationId, responseId, prompt, aspectRatio } = input || {};
   const missing: string[] = [];
   if (!imageToken || typeof imageToken !== "string") missing.push("imageToken");
   if (!responseChunkId || typeof responseChunkId !== "string") missing.push("responseChunkId");
@@ -291,6 +312,7 @@ function validateUpscaleInput(input: any): { valid: boolean; error?: string; dat
       conversationId,
       responseId,
       prompt: typeof prompt === "string" ? prompt : "",
+      aspectRatio: typeof aspectRatio === "string" ? aspectRatio : undefined,
     },
   };
 }
@@ -316,6 +338,15 @@ async function runUpscale(data: UpscaleRequest) {
   const id = crypto.randomUUID();
   const savedName = `${id}.png`;
   fs.writeFileSync(path.join(IMAGES_DIR, savedName), buf);
+  
+  // Store metadata for the upscaled image
+  const metaStore = getImageMetaStore(IMAGES_DIR);
+  metaStore.set(savedName, {
+    prompt: data.prompt || "",
+    aspectRatio: data.aspectRatio,
+    createdAt: Date.now(),
+  });
+  
   return { url: `/images/${savedName}`, savedName, mime: "image/png", bytes: buf.length };
 }
 
@@ -376,6 +407,7 @@ router.get("/upscale-link/:id", async (req, res) => {
       conversationId: metadata.conversationId,
       responseId: metadata.responseId,
       prompt: metadata.prompt,
+      aspectRatio: metadata.aspectRatio,
     });
     
     // Optionally delete the token after successful use (one-time use)

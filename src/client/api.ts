@@ -11,6 +11,8 @@ export interface GeneratedImage {
   savedName?: string;
   upscaleId?: string;
   upscaleLink?: string;
+  prompt?: string;
+  aspectRatio?: string;
 }
 
 export interface GenerateResult {
@@ -35,6 +37,8 @@ export interface StoredImage {
   url: string;
   bytes: number;
   createdAt: number;
+  prompt?: string;
+  aspectRatio?: string;
 }
 
 export async function checkAuth(): Promise<AuthStatus> {

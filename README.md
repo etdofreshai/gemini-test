@@ -169,7 +169,9 @@ curl -X POST http://localhost:3000/api/generate \
       "url": "/images/uuid-here.png",
       "savedName": "uuid-here.png",
       "upscaleId": "550e8400-e29b-41d4-a716-446655440000",
-      "upscaleLink": "/api/upscale-link/550e8400-e29b-41d4-a716-446655440000"
+      "upscaleLink": "/api/upscale-link/550e8400-e29b-41d4-a716-446655440000",
+      "prompt": "A serene mountain landscape at sunset",
+      "aspectRatio": "16:9"
     }
   ],
   "metadata": {
@@ -181,7 +183,9 @@ curl -X POST http://localhost:3000/api/generate \
 }
 ```
 
-**Note:** The `upscaleId` is a server-stored token that references the upscale metadata. It does not expose sensitive tokens like `imageToken` or `responseChunkId`. Upscale links are valid for 24 hours.
+**Note:** 
+- The `upscaleId` is a server-stored token that references the upscale metadata. It does not expose sensitive tokens like `imageToken` or `responseChunkId`. Upscale links are valid for 24 hours.
+- `prompt` and `aspectRatio` are included in each image object for convenience and are persisted server-side for the UI to display.
 
 **Errors:**
 
@@ -297,11 +301,15 @@ List all locally stored generated images.
       "filename": "uuid-1.png",
       "url": "/images/uuid-1.png",
       "bytes": 1234567,
-      "createdAt": 1709030400000
+      "createdAt": 1709030400000,
+      "prompt": "A serene mountain landscape at sunset",
+      "aspectRatio": "16:9"
     }
   ]
 }
 ```
+
+**Note:** `prompt` and `aspectRatio` are optional fields that are persisted server-side for each generated image.
 
 ---
 

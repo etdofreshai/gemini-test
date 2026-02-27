@@ -97,6 +97,8 @@ function createStoredImageTile(img: StoredImage): HTMLDivElement {
   const tile = document.createElement("div");
   tile.className = "tile";
   tile.dataset.filename = img.filename;
+  if (img.prompt) tile.dataset.prompt = img.prompt;
+  if (img.aspectRatio) tile.dataset.aspectRatio = img.aspectRatio;
 
   tile.addEventListener("click", (e) => {
     if ((e.target as HTMLElement).closest(".delete-btn")) return;
@@ -105,7 +107,8 @@ function createStoredImageTile(img: StoredImage): HTMLDivElement {
       toggleTileSelection(tile, img.filename);
       return;
     }
-    window.open(img.url, "_blank");
+    // Open modal instead of new tab
+    openImageModal(img.url, img.prompt, img.aspectRatio, img.filename);
   });
 
   const imgEl = document.createElement("img");
@@ -114,8 +117,20 @@ function createStoredImageTile(img: StoredImage): HTMLDivElement {
 
   const overlay = document.createElement("div");
   overlay.className = "overlay";
+  
+  // Build overlay text with prompt preview + aspect ratio
+  const overlayParts: string[] = [];
+  if (img.prompt) {
+    const truncated = img.prompt.length > 60 ? img.prompt.slice(0, 60) + "…" : img.prompt;
+    overlayParts.push(truncated);
+  } else {
+    overlayParts.push(img.filename);
+  }
   const sizeMB = img.bytes > 0 ? ` • ${(img.bytes / 1024 / 1024).toFixed(1)} MB` : "";
-  overlay.textContent = `${img.filename}${sizeMB}`;
+  if (img.aspectRatio) {
+    overlayParts.push(`[${img.aspectRatio}]`);
+  }
+  overlay.textContent = overlayParts.join(" ") + sizeMB;
 
   const deleteBtn = createDeleteBtn(img.filename, tile);
   const checkbox = createCheckbox(img.filename, tile);
@@ -326,10 +341,14 @@ function createGeneratedImageTile(
 ): HTMLDivElement {
   // Use savedName (uuid-based filename in storage) for deletion
   const savedName = img.savedName || img.url.split("/").pop() || img.filename;
+  const promptText = img.prompt || metadata.prompt;
+  const aspectRatioText = img.aspectRatio;
 
   const tile = document.createElement("div");
   tile.className = "tile";
   tile.dataset.filename = savedName;
+  if (promptText) tile.dataset.prompt = promptText;
+  if (aspectRatioText) tile.dataset.aspectRatio = aspectRatioText;
 
   tile.addEventListener("click", (e) => {
     if ((e.target as HTMLElement).closest(".upscale-btn")) return;
@@ -339,7 +358,8 @@ function createGeneratedImageTile(
       toggleTileSelection(tile, savedName);
       return;
     }
-    window.open(img.url, "_blank");
+    // Open modal instead of new tab
+    openImageModal(img.url, promptText, aspectRatioText, img.filename);
   });
 
   const imgEl = document.createElement("img");
@@ -348,10 +368,20 @@ function createGeneratedImageTile(
 
   const overlay = document.createElement("div");
   overlay.className = "overlay";
-  const dims = img.dimensions
-    ? ` • ${img.dimensions[0]}\u00D7${img.dimensions[1]}`
-    : "";
-  overlay.textContent = `${img.filename}${dims}`;
+  
+  // Build overlay text with prompt preview + aspect ratio
+  const overlayParts: string[] = [];
+  if (promptText) {
+    const truncated = promptText.length > 60 ? promptText.slice(0, 60) + "…" : promptText;
+    overlayParts.push(truncated);
+  } else {
+    overlayParts.push(img.filename);
+  }
+  const dims = img.dimensions ? ` • ${img.dimensions[0]}\u00D7${img.dimensions[1]}` : "";
+  if (aspectRatioText) {
+    overlayParts.push(`[${aspectRatioText}]`);
+  }
+  overlay.textContent = overlayParts.join(" ") + dims;
 
   const deleteBtn = createDeleteBtn(savedName, tile);
   const checkbox = createCheckbox(savedName, tile);
@@ -433,7 +463,8 @@ function createUpscaleBtn(
           toggleTileSelection(tile, tile.dataset.filename!);
           return;
         }
-        window.open(result.url, "_blank");
+        // Open modal instead of new tab
+        openImageModal(result.url, tile.dataset.prompt, tile.dataset.aspectRatio, img.filename);
       };
 
       // Update overlay with file size
@@ -452,6 +483,82 @@ function createUpscaleBtn(
   });
 
   return btn;
+}
+
+// Image modal for single-image view with full prompt and aspect ratio
+let modal: HTMLDivElement | null = null;
+
+function openImageModal(
+  imageUrl: string,
+  prompt?: string,
+  aspectRatio?: string,
+  filename?: string
+): void {
+  // Create modal if it doesn't exist
+  if (!modal) {
+    modal = document.createElement("div");
+    modal.id = "image-modal";
+    modal.innerHTML = `
+      <div class="modal-backdrop"></div>
+      <div class="modal-content">
+        <button class="modal-close" aria-label="Close">&times;</button>
+        <img class="modal-image" src="" alt="">
+        <div class="modal-info">
+          <div class="modal-prompt"></div>
+          <div class="modal-meta"></div>
+        </div>
+        <a class="modal-open-btn" href="" target="_blank" rel="noopener">Open Full Size</a>
+      </div>
+    `;
+    document.body.appendChild(modal);
+
+    // Close on backdrop click or close button
+    modal.querySelector(".modal-backdrop")!.addEventListener("click", closeModal);
+    modal.querySelector(".modal-close")!.addEventListener("click", closeModal);
+
+    // Close on Escape key
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && modal?.classList.contains("visible")) {
+        closeModal();
+      }
+    });
+  }
+
+  // Update modal content
+  const imgEl = modal.querySelector(".modal-image") as HTMLImageElement;
+  const promptEl = modal.querySelector(".modal-prompt") as HTMLDivElement;
+  const metaEl = modal.querySelector(".modal-meta") as HTMLDivElement;
+  const openBtn = modal.querySelector(".modal-open-btn") as HTMLAnchorElement;
+
+  imgEl.src = imageUrl;
+  imgEl.alt = filename || "Generated image";
+  openBtn.href = imageUrl;
+
+  // Show prompt (full text)
+  if (prompt) {
+    promptEl.textContent = prompt;
+    promptEl.style.display = "block";
+  } else {
+    promptEl.style.display = "none";
+  }
+
+  // Show aspect ratio + filename
+  const metaParts: string[] = [];
+  if (aspectRatio) metaParts.push(aspectRatio);
+  if (filename) metaParts.push(filename);
+  metaEl.textContent = metaParts.join(" • ");
+  metaEl.style.display = metaParts.length > 0 ? "block" : "none";
+
+  // Show modal
+  modal.classList.add("visible");
+  document.body.style.overflow = "hidden";
+}
+
+function closeModal(): void {
+  if (modal) {
+    modal.classList.remove("visible");
+    document.body.style.overflow = "";
+  }
 }
 
 function showToast(msg: string) {

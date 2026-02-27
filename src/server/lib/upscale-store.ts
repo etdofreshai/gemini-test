@@ -15,6 +15,7 @@ export interface UpscaleMetadata {
   conversationId: string;
   responseId: string;
   prompt: string;
+  aspectRatio?: string;
   createdAt: number;
 }
 
