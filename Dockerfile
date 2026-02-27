@@ -35,6 +35,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Point browser.ts at the system Chromium
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
+# Suppress D-Bus session bus connection attempts (harmless in containers)
+ENV DBUS_SESSION_BUS_ADDRESS=/dev/null
+
 # Start Xvfb so Chromium can run headed (avoids Google bot detection)
 ENV DISPLAY=:99
 

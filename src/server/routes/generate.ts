@@ -40,19 +40,6 @@ const upload = multer({
 const IMAGES_DIR = path.join(process.cwd(), ".chrome-profile", ".generated-images");
 fs.mkdirSync(IMAGES_DIR, { recursive: true });
 
-// Middleware to ensure cookies are available
-async function ensureAuth(_req: any, res: any, next: any) {
-  if (!hasCookies()) {
-    const restored = await tryRestoreSession();
-    if (!restored) {
-      return res
-        .status(401)
-        .json({ error: "Not authenticated. Call GET /api/login first." });
-    }
-  }
-  next();
-}
-
 // Validation helpers
 function validatePrompt(prompt: unknown): { valid: boolean; error?: string } {
   if (prompt === undefined || prompt === null) {
@@ -148,8 +135,8 @@ router.delete("/images", (req, res) => {
 });
 
 // POST /api/generate — generate images (always returns 1K previews)
-router.post("/generate", upload.array("images", MAX_FILES), ensureAuth, async (req, res) => {
-  // Validate prompt
+router.post("/generate", upload.array("images", MAX_FILES), async (req, res) => {
+  // Validate prompt FIRST (before auth) for better UX
   const promptValidation = validatePrompt(req.body?.prompt);
   if (!promptValidation.valid) {
     return res.status(400).json({ error: promptValidation.error });
@@ -163,7 +150,15 @@ router.post("/generate", upload.array("images", MAX_FILES), ensureAuth, async (r
       error: `Invalid aspect ratio. Allowed values: ${ALLOWED_ASPECT_RATIOS.join(", ")}` 
     });
   }
-  const normalizedPrompt = /^create image\b[:\-]?\s*/i.test(rawPrompt)
+
+  // Now check auth
+  if (!hasCookies()) {
+    const restored = await tryRestoreSession();
+    if (!restored) {
+      return res.status(401).json({ error: "Not authenticated. Call GET /api/login first." });
+    }
+  }
+  const normalizedPrompt = /^create image\b[:-]?\s*/i.test(rawPrompt)
     ? rawPrompt
     : `Create image: ${rawPrompt}`;
 
@@ -224,11 +219,11 @@ router.post("/generate", upload.array("images", MAX_FILES), ensureAuth, async (r
 });
 
 // POST /api/upscale — download full-size (2K) image via c8o8Fe RPC
-router.post("/upscale", ensureAuth, async (req, res) => {
+router.post("/upscale", async (req, res) => {
   const { imageToken, responseChunkId, conversationId, responseId, prompt } =
     req.body || {};
 
-  // Validate required fields
+  // Validate required fields FIRST (before auth) for better UX
   const missing: string[] = [];
   if (!imageToken || typeof imageToken !== "string") missing.push("imageToken");
   if (!responseChunkId || typeof responseChunkId !== "string") missing.push("responseChunkId");
@@ -239,6 +234,14 @@ router.post("/upscale", ensureAuth, async (req, res) => {
     return res.status(400).json({ 
       error: `Missing or invalid fields: ${missing.join(", ")}` 
     });
+  }
+
+  // Now check auth
+  if (!hasCookies()) {
+    const restored = await tryRestoreSession();
+    if (!restored) {
+      return res.status(401).json({ error: "Not authenticated. Call GET /api/login first." });
+    }
   }
 
   try {

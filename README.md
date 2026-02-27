@@ -462,6 +462,20 @@ Ensure the container has sufficient memory:
 docker run --memory=2g ...
 ```
 
+### D-Bus/System Bus warnings in logs
+
+When running Chromium in a container, you may see warnings like:
+```
+Failed to connect to the bus: Failed to connect to socket /run/dbus/system_bus_socket
+```
+
+These are **harmless** and occur because containers lack a D-Bus daemon. The server:
+- Sets `DBUS_SESSION_BUS_ADDRESS=/dev/null` to suppress connection attempts
+- Adds Chromium flags to disable D-Bus-dependent features
+- Filters known harmless warnings from stderr output
+
+If you see other Chromium errors, they will still be logged. Only D-Bus-related noise is suppressed.
+
 ### Cookies expired
 
 Google session cookies expire periodically. Re-authenticate via the login UI.

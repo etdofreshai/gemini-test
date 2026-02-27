@@ -7,6 +7,27 @@ const CHROMIUM_PATH = process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromiu
 const CDP_PORT = 9222;
 const CDP_BASE = `http://localhost:${CDP_PORT}`;
 
+// Known harmless Chromium warnings/errors to suppress in containerized environments
+// These are typically D-Bus/system bus connection failures that don't affect functionality
+const SUPPRESSED_PATTERNS = [
+  /Failed to connect to.*bus/i,
+  /D-Bus.*connection/i,
+  /GDBus.*Error/i,
+  /Cannot autolaunch D-Bus/i,
+  /org\.freedesktop\.DBus/i,
+  /lsb_release.*failed/i,
+  /ERROR:.*bus/i,
+  /libdbus.*failed/i,
+  /Desktop portal.*failed/i,
+  /XDG_PORTAL/i,
+  /cannot open display/i,  // Usually harmless with Xvfb
+  /Gtk-WARNING.*cannot open/i,
+];
+
+function shouldSuppress(line: string): boolean {
+  return SUPPRESSED_PATTERNS.some(p => p.test(line));
+}
+
 let chromiumProc: ChildProcess | null = null;
 let starting: Promise<void> | null = null;
 
@@ -62,15 +83,58 @@ export async function ensureChromium(): Promise<void> {
         `--remote-debugging-port=${CDP_PORT}`,
         "--remote-debugging-address=0.0.0.0",
         `--user-data-dir=${PROFILE_DIR}`,
+        // Suppress D-Bus-related features and noise
+        "--disable-dbus-activation",
+        "--disable-breakpad",
+        "--disable-background-networking",
+        "--disable-component-extensions-with-background-pages",
+        "--disable-default-apps",
+        "--disable-notifications",
+        "--disable-sync",
+        "--no-first-run",
+        "--metrics-recording-only",
         "about:blank",
-      ], { stdio: ["ignore", "pipe", "pipe"] });
+      ], {
+        stdio: ["ignore", "pipe", "pipe"],
+        env: {
+          // Prevent D-Bus session bus connection attempts
+          ...process.env,
+          DBUS_SESSION_BUS_ADDRESS: "/dev/null",
+          GNOME_DISABLE_CRASH_DIALOG: "1",
+        },
+      });
 
-      chromiumProc.stdout?.on("data", (d: Buffer) => process.stdout.write(`[chromium] ${d}`));
-      chromiumProc.stderr?.on("data", (d: Buffer) => process.stderr.write(`[chromium] ${d}`));
+      // Attach error handler FIRST to prevent unhandled crash on ENOENT
+      const spawnErrorRef: { err: Error | null } = { err: null };
+      chromiumProc.on("error", (err: Error) => {
+        spawnErrorRef.err = err;
+        console.error(`[chromium] Failed to spawn: ${err.message}`);
+        chromiumProc = null;
+      });
+
+      chromiumProc.stdout?.on("data", (d: Buffer) => {
+        const line = d.toString();
+        if (!shouldSuppress(line)) {
+          process.stdout.write(`[chromium] ${d}`);
+        }
+      });
+      chromiumProc.stderr?.on("data", (d: Buffer) => {
+        const line = d.toString();
+        if (!shouldSuppress(line)) {
+          process.stderr.write(`[chromium] ${d}`);
+        }
+      });
       chromiumProc.on("exit", (code) => {
         console.log(`[chromium] exited ${code}`);
         chromiumProc = null;
       });
+
+      // Give a brief moment for any immediate spawn errors to surface
+      await sleep(100);
+      if (spawnErrorRef.err) {
+        const errMsg = spawnErrorRef.err.message;
+        throw new Error(`Chromium spawn failed: ${errMsg}`);
+      }
 
       await waitForCdp();
       console.log("[gemini] Chromium started with CDP on port " + CDP_PORT);
