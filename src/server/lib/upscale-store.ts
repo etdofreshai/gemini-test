@@ -19,11 +19,18 @@ export interface UpscaleMetadata {
   createdAt: number;
 }
 
+export interface UpscaleCachedResult {
+  url: string;
+  savedName: string;
+  cachedAt: number;
+}
+
 interface StoreEntry {
   id: string;
   metadata: UpscaleMetadata;
   expiresAt: number;
   lastAccessed: number;
+  cachedResult?: UpscaleCachedResult;
 }
 
 // Configuration
@@ -31,7 +38,7 @@ const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const DEFAULT_MAX_ENTRIES = 1000;
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
-class UpscaleStore {
+export class UpscaleStore {
   private store: Map<string, StoreEntry> = new Map();
   private ttlMs: number;
   private maxEntries: number;
@@ -89,6 +96,46 @@ class UpscaleStore {
     // Update last accessed time for LRU
     entry.lastAccessed = Date.now();
     return entry.metadata;
+  }
+
+  /**
+   * Store a cached upscale result for the given token ID.
+   * Subsequent calls to getCachedResult will return this until expiration.
+   */
+  cacheResult(id: string, result: Omit<UpscaleCachedResult, "cachedAt">): boolean {
+    const entry = this.store.get(id);
+    if (!entry) return false;
+
+    // Don't cache if the entry itself is expired
+    if (Date.now() > entry.expiresAt) {
+      this.store.delete(id);
+      return false;
+    }
+
+    entry.cachedResult = {
+      ...result,
+      cachedAt: Date.now(),
+    };
+    entry.lastAccessed = Date.now();
+    return true;
+  }
+
+  /**
+   * Get a cached upscale result for the given token ID.
+   * Returns null if no cached result, entry not found, or expired.
+   */
+  getCachedResult(id: string): UpscaleCachedResult | null {
+    const entry = this.store.get(id);
+    if (!entry) return null;
+
+    // Check expiration
+    if (Date.now() > entry.expiresAt) {
+      this.store.delete(id);
+      return null;
+    }
+
+    entry.lastAccessed = Date.now();
+    return entry.cachedResult ?? null;
   }
 
   /**

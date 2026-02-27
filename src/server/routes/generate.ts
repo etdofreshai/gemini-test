@@ -389,6 +389,9 @@ router.post("/upscale", async (req, res) => {
 });
 
 // GET /api/upscale-link/:id — one-click upscale using server-stored metadata
+// Results are cached: first click performs the upscale, subsequent clicks within
+// the 24-hour TTL redirect immediately to the cached image. After 24h (or if the
+// cached file is missing from disk) a 410 Gone response is returned.
 router.get("/upscale-link/:id", async (req, res) => {
   const { id } = req.params;
   
@@ -397,7 +400,22 @@ router.get("/upscale-link/:id", async (req, res) => {
     return res.status(400).json({ error: "Invalid upscale link ID format" });
   }
 
-  // Look up metadata from store
+  // Check for a cached upscale result first (avoids re-calling Gemini)
+  const cached = upscaleStore.getCachedResult(id);
+  if (cached) {
+    // Verify the file still exists on disk
+    const cachedPath = path.join(IMAGES_DIR, cached.savedName);
+    if (fs.existsSync(cachedPath)) {
+      return res.redirect(302, cached.url);
+    }
+    // File was deleted — return 410 Gone
+    return res.status(410).json({
+      error: "Upscaled image file no longer exists on disk.",
+      code: "UPSCALE_FILE_MISSING",
+    });
+  }
+
+  // Look up metadata from store (checks TTL expiration)
   const metadata = upscaleStore.getMetadata(id);
   if (!metadata) {
     return res.status(404).json({ 
@@ -424,8 +442,8 @@ router.get("/upscale-link/:id", async (req, res) => {
       aspectRatio: metadata.aspectRatio,
     });
     
-    // Optionally delete the token after successful use (one-time use)
-    // upscaleStore.delete(id);
+    // Cache the result so subsequent clicks within 24h are instant
+    upscaleStore.cacheResult(id, { url: result.url, savedName: result.savedName });
     
     return res.redirect(302, result.url);
   } catch (err: unknown) {

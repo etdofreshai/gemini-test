@@ -271,15 +271,18 @@ curl -L http://localhost:3000/api/upscale-link/550e8400-e29b-41d4-a716-446655440
 
 **Errors:**
 
-| Code | Message | Code |
-|------|---------|------|
+| Code | Message | Error Code |
+|------|---------|------------|
 | 400 | Invalid upscale link ID format | - |
 | 404 | Upscale link not found or expired. Links are valid for 24 hours. | `UPSCALE_LINK_EXPIRED` |
+| 410 | Upscaled image file no longer exists on disk. | `UPSCALE_FILE_MISSING` |
 | 401 | Not authenticated. Call GET /api/login first. | - |
 | 500 | Generation error (see message for details) | - |
 
 **Upscale Link Features:**
-- **TTL**: Links expire after 24 hours
+- **Caching**: The first click performs the upscale and caches the resulting image. Subsequent clicks within 24 hours redirect instantly to the cached file without calling the upstream API again.
+- **TTL**: Links expire 24 hours after creation. After expiry, the link returns `404` (`UPSCALE_LINK_EXPIRED`).
+- **Missing file**: If the cached upscaled image is deleted from disk before the link expires, the link returns `410 Gone` (`UPSCALE_FILE_MISSING`) instead of silently regenerating.
 - **Capacity**: Maximum 1000 pending upscale links (LRU eviction)
 - **Security**: Internal tokens are never exposed to clients
 
