@@ -8,7 +8,7 @@ import {
   cdpListTabs,
   cdpCloseTab,
 } from "../lib/browser.js";
-import { setCookies } from "../lib/cookies.js";
+import { setCookies, saveCookiesToFile } from "../lib/cookies.js";
 
 const router = Router();
 const wss = new WebSocketServer({ noServer: true });
@@ -163,6 +163,10 @@ export function handleRemoteLoginWs(req: IncomingMessage, socket: Socket, head: 
       ) {
         console.log("[Remote Login] Auth cookies captured successfully!");
         setCookies(capturedCookies);
+        // Persist cookies to file so they survive container restarts
+        saveCookiesToFile().catch((err) =>
+          console.error("[Remote Login] Failed to persist cookies to file:", err)
+        );
         session.status = "success";
         session.message = "✅ Login successful! Cookies captured.";
         if (clientWs.readyState === NodeWebSocket.OPEN) {

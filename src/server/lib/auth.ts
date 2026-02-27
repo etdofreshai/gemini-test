@@ -4,7 +4,7 @@ import {
   cdpNewTab,
   cdpCloseTab,
 } from "./browser.js";
-import { setCookies } from "./cookies.js";
+import { setCookies, saveCookiesToFile } from "./cookies.js";
 
 const GEMINI_APP_URL = "https://gemini.google.com/app";
 
@@ -113,6 +113,8 @@ export async function tryRestoreSession(): Promise<boolean> {
       capturedCookies["__Secure-1PSIDTS"]
     ) {
       setCookies(capturedCookies);
+      // Persist cookies so they survive container restarts
+      await saveCookiesToFile();
       console.log("[auth] Session restored from Chrome profile.");
       return true;
     }

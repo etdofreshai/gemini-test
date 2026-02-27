@@ -483,9 +483,36 @@ volumes:
 
 ---
 
+## Cookie Persistence (Independent of .env)
+
+Auth cookies are automatically persisted to a dedicated session file **independent of the `.env` file**:
+
+- **File**: `.chrome-profile/session-cookies.json` (inside the mounted Docker volume)
+- **Written**: Automatically after every successful login — via Remote Login UI, `tryRestoreSession`, or a cookie refresh response
+- **Read**: On startup, after checking env vars — used as a fallback when `__Secure-1PSID`/`__Secure-1PSIDTS` are absent from the environment
+
+This means:
+- **Container restarts** retain auth without re-logging in, as long as the `.chrome-profile` volume is mounted
+- **No `.env` needed** once an initial login has been performed via the UI
+- **Priority**: environment variables → `.env` file → `session-cookies.json`
+
+The session file is stored alongside the Chrome profile so a single Docker volume covers both:
+
+```bash
+docker run -d \
+  -p 3000:3000 \
+  -v gemini-profile:/app/.chrome-profile \   # <-- covers both Chrome profile AND session-cookies.json
+  --name gemini-api \
+  gemini-image-gen
+```
+
+> **Note**: `session-cookies.json` contains sensitive Google auth tokens. Ensure the volume is not world-readable and is not committed to source control (it is already in `.gitignore` via `.chrome-profile/`).
+
+---
+
 ## Security Considerations
 
-1. **Cookie Storage**: Cookies are stored in memory and optionally in `.env`. In production, use secure storage.
+1. **Cookie Storage**: Cookies are stored in memory, optionally in `.env`, and automatically persisted to `.chrome-profile/session-cookies.json`. In production, ensure the Docker volume is access-controlled.
 
 2. **Network Access**: The API has no built-in authentication. Deploy behind a reverse proxy with auth (e.g., nginx + basic auth, Cloudflare Access).
 
