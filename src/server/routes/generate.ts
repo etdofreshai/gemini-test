@@ -163,9 +163,13 @@ router.post("/generate", upload.array("images", MAX_FILES), ensureAuth, async (r
       error: `Invalid aspect ratio. Allowed values: ${ALLOWED_ASPECT_RATIOS.join(", ")}` 
     });
   }
+  const normalizedPrompt = /^create image\b[:\-]?\s*/i.test(rawPrompt)
+    ? rawPrompt
+    : `Create image: ${rawPrompt}`;
+
   const prompt = aspectValidation.value
-    ? `${rawPrompt}. Use a ${aspectValidation.value} aspect ratio.`
-    : rawPrompt;
+    ? `${normalizedPrompt}. Use a ${aspectValidation.value} aspect ratio.`
+    : normalizedPrompt;
 
   try {
     const imageBuffers = ((req.files as Express.Multer.File[]) || []).map(
