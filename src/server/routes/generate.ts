@@ -191,6 +191,20 @@ router.post("/generate", upload.array("images", MAX_FILES), async (req, res) => 
 
     const result = await generateImages(prompt, imageBuffers);
 
+    // If Gemini returned text instead of images, return it as a structured response
+    if (result.images.length === 0 && result.textContent) {
+      return res.json({
+        images: [],
+        textContent: result.textContent,
+        metadata: {
+          conversationId: result.conversationId,
+          responseId: result.responseId,
+          modelName: result.modelName,
+          prompt: rawPrompt,
+        },
+      });
+    }
+
     // Download only PNG images as 1K previews, save to IMAGES_DIR
     const pngImages = result.images.filter((img) => img.mime === "image/png");
     const images = [];

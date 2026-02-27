@@ -17,6 +17,7 @@ export interface GeneratedImage {
 
 export interface GenerateResult {
   images: GeneratedImage[];
+  textContent?: string | null;
   metadata: {
     conversationId: string | null;
     responseId: string | null;

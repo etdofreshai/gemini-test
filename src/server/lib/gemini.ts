@@ -33,6 +33,7 @@ export interface ParsedImage {
 
 export interface ParsedResponse {
   images: ParsedImage[];
+  textContent: string | null;
   conversationId: string | null;
   responseId: string | null;
   modelName: string | null;
@@ -226,6 +227,7 @@ export function parseStreamResponse(responseText: string): ParsedResponse {
   const lines = cleaned.split("\n").filter((l) => l.trim().length > 0);
 
   const images: ParsedImage[] = [];
+  const textParts: string[] = [];
   let conversationId: string | null = null;
   let responseId: string | null = null;
   let modelName: string | null = null;
@@ -296,7 +298,30 @@ export function parseStreamResponse(responseText: string): ParsedResponse {
     if (!Array.isArray(inner[4])) continue;
 
     for (const candidate of inner[4]) {
-      if (!Array.isArray(candidate) || !candidate[12]) continue;
+      if (!Array.isArray(candidate)) continue;
+
+      // Extract text content from candidate[1]
+      // Gemini text responses use structures like:
+      //   candidate[1][0] = "text string"
+      //   candidate[1] = [["text", ...], ...]
+      try {
+        const textData = candidate[1];
+        if (Array.isArray(textData) && textData.length > 0) {
+          // candidate[1][0] is typically the text string or an array containing it
+          const firstPart = textData[0];
+          if (typeof firstPart === "string" && firstPart.trim().length > 0) {
+            textParts.push(firstPart.trim());
+          } else if (Array.isArray(firstPart) && typeof firstPart[0] === "string" && firstPart[0].trim().length > 0) {
+            textParts.push(firstPart[0].trim());
+          }
+        } else if (typeof textData === "string" && textData.trim().length > 0) {
+          textParts.push(textData.trim());
+        }
+      } catch {
+        // Text extraction is best-effort; don't fail on parsing oddities
+      }
+
+      if (!candidate[12]) continue;
 
       // Extract response chunk ID (rc_xxx) from candidate[0]
       const chunkId =
@@ -349,7 +374,8 @@ export function parseStreamResponse(responseText: string): ParsedResponse {
     }
   }
 
-  return { images, conversationId, responseId, modelName };
+  const textContent = textParts.length > 0 ? textParts.join("\n\n") : null;
+  return { images, textContent, conversationId, responseId, modelName };
 }
 
 // Download an image to a file path
@@ -611,9 +637,11 @@ export async function generateImages(
   console.log(`Response: ${parsed.responseId}`);
   console.log(`Images found: ${parsed.images.length}\n`);
 
-  if (parsed.images.length === 0) {
+  if (parsed.images.length === 0 && parsed.textContent) {
+    console.log(`\nGemini returned text instead of images:\n${parsed.textContent.slice(0, 200)}${parsed.textContent.length > 200 ? "..." : ""}\n`);
+  } else if (parsed.images.length === 0) {
     throw new Error(
-      "Gemini returned text instead of images. Try rephrasing your prompt to be more specific about image generation."
+      "Gemini returned no images and no text. Try rephrasing your prompt to be more specific about image generation."
     );
   }
 

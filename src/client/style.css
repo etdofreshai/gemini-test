@@ -441,6 +441,63 @@ body.selection-mode .delete-btn { display: none; }
   background: #3b5de7;
 }
 
+/* Text-only response modal */
+#text-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+#text-modal.visible {
+  display: flex;
+}
+
+.text-modal-content {
+  max-width: 600px;
+  width: 100%;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.text-modal-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 16px 10px;
+}
+
+.text-modal-icon {
+  font-size: 22px;
+}
+
+.text-modal-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #e0e0e0;
+}
+
+.text-modal-prompt {
+  padding: 0 16px 8px;
+  font-size: 12px;
+  color: #888;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.text-modal-body {
+  padding: 16px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #d0d0d0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-y: auto;
+  flex: 1;
+}
+
 /* Mobile adjustments for modal */
 @media (max-width: 600px) {
   .modal-content {

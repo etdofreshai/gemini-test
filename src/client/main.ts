@@ -307,7 +307,11 @@ async function handleGenerate() {
     );
 
     if (!data.images || data.images.length === 0) {
-      showToast("No images returned");
+      if (data.textContent) {
+        openTextModal(data.textContent, prompt);
+      } else {
+        showToast("No images returned");
+      }
       return;
     }
 
@@ -557,6 +561,60 @@ function openImageModal(
 function closeModal(): void {
   if (modal) {
     modal.classList.remove("visible");
+    document.body.style.overflow = "";
+  }
+}
+
+// Text-only response modal (when Gemini returns text instead of images)
+let textModal: HTMLDivElement | null = null;
+
+function openTextModal(text: string, prompt?: string): void {
+  if (!textModal) {
+    textModal = document.createElement("div");
+    textModal.id = "text-modal";
+    textModal.innerHTML = `
+      <div class="modal-backdrop"></div>
+      <div class="modal-content text-modal-content">
+        <button class="modal-close" aria-label="Close">&times;</button>
+        <div class="text-modal-header">
+          <span class="text-modal-icon">💬</span>
+          <span class="text-modal-title">Gemini Response</span>
+        </div>
+        <div class="text-modal-prompt"></div>
+        <div class="text-modal-body"></div>
+      </div>
+    `;
+    document.body.appendChild(textModal);
+
+    textModal.querySelector(".modal-backdrop")!.addEventListener("click", closeTextModal);
+    textModal.querySelector(".modal-close")!.addEventListener("click", closeTextModal);
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && textModal?.classList.contains("visible")) {
+        closeTextModal();
+      }
+    });
+  }
+
+  const promptEl = textModal.querySelector(".text-modal-prompt") as HTMLDivElement;
+  const bodyEl = textModal.querySelector(".text-modal-body") as HTMLDivElement;
+
+  if (prompt) {
+    promptEl.textContent = `Prompt: ${prompt}`;
+    promptEl.style.display = "block";
+  } else {
+    promptEl.style.display = "none";
+  }
+
+  bodyEl.textContent = text;
+
+  textModal.classList.add("visible");
+  document.body.style.overflow = "hidden";
+}
+
+function closeTextModal(): void {
+  if (textModal) {
+    textModal.classList.remove("visible");
     document.body.style.overflow = "";
   }
 }
