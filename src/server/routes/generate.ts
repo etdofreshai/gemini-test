@@ -393,7 +393,7 @@ router.post("/summarize", summarizeUpload.single("file"), async (req, res) => {
   const prompt = [
     "Analyze the attached file for memory retrieval and archival.",
     "",
-    "If the raw content (transcription, OCR, extracted text) is under ~500 words,",
+    "If the raw content (transcription, OCR, extracted text) is under ~2000 words,",
     "return it verbatim under a Raw Content section. Otherwise, summarize using",
     "the structure below.",
     "",
