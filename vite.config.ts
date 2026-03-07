@@ -5,6 +5,13 @@ export default defineConfig({
   build: {
     outDir: "../../dist/client",
     emptyOutDir: true,
+    rollupOptions: {
+      input: {
+        main: "src/client/index.html",
+        imageGenerator: "src/client/image-generator.html",
+        fileSummarizer: "src/client/file-summarizer.html",
+      },
+    },
   },
   server: {
     port: 5173,

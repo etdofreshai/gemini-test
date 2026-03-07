@@ -142,6 +142,14 @@ describe("Gemini Image API", () => {
     });
   });
 
+  describe("File Summarizer", () => {
+    it("POST /api/summarize rejects missing file", async () => {
+      const res = await request("POST", "/api/summarize", {});
+      expect(res.status).toBe(400);
+      expect((res.data as any).error).toContain("file");
+    });
+  });
+
   describe("Image List", () => {
     it("GET /api/images returns array", async () => {
       const res = await request("GET", "/api/images");

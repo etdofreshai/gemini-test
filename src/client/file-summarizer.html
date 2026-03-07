@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gemini File Summarizer</title>
+</head>
+<body>
+  <div id="auth-banner">
+    <span>Not authenticated.</span>
+    <button id="login-btn">Login with Google</button>
+  </div>
+
+  <main class="summary-page">
+    <div class="summary-header">
+      <a class="top-nav-link" href="/">← Home</a>
+      <h1>File Summarizer</h1>
+      <p>Upload one file and Gemini will summarize it.</p>
+    </div>
+
+    <section class="summary-card">
+      <div class="summary-controls">
+        <button id="summary-file-btn" class="secondary-btn">Choose File</button>
+        <span id="summary-file-name">No file selected</span>
+        <input id="summary-file-input" type="file" hidden>
+      </div>
+
+      <label for="summary-instructions">Optional instructions</label>
+      <textarea id="summary-instructions" rows="4" placeholder="Example: focus on action items and risks."></textarea>
+
+      <button id="summarize-btn" class="primary-btn">Summarize</button>
+    </section>
+
+    <section class="summary-card">
+      <h2>Summary</h2>
+      <div id="summary-meta" class="summary-meta"></div>
+      <pre id="summary-output" class="summary-output">Your summary will appear here.</pre>
+    </section>
+  </main>
+
+  <div id="toast"></div>
+
+  <script type="module" src="/file-summarizer.ts"></script>
+</body>
+</html>

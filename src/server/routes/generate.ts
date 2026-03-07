@@ -20,6 +20,7 @@ const router = Router();
 const MAX_PROMPT_LENGTH = 4000;
 const MAX_FILES = 10;
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB per file
+const MAX_SUMMARY_FILE_SIZE_BYTES = 20 * 1024 * 1024; // 20 MB single file
 const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"];
 const ALLOWED_ASPECT_RATIOS = ["1:1", "4:3", "3:4", "16:9", "9:16"];
 
@@ -36,6 +37,11 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_FILE_SIZE_BYTES, files: MAX_FILES },
   fileFilter,
+});
+
+const summarizeUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_SUMMARY_FILE_SIZE_BYTES, files: 1 },
 });
 
 // Store generated images in .chrome-profile/.generated-images/
@@ -293,6 +299,60 @@ router.post("/generate", upload.array("images", MAX_FILES), async (req, res) => 
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
     console.error("Generation error:", err);
+    res.status(500).json({ error: message });
+  }
+});
+
+// POST /api/summarize — summarize a single uploaded file
+router.post("/summarize", summarizeUpload.single("file"), async (req, res) => {
+  const file = req.file;
+  if (!file) {
+    return res.status(400).json({ error: "Missing file upload (field name: file)" });
+  }
+
+  const instructions = typeof req.body?.instructions === "string" ? req.body.instructions.trim() : "";
+
+  if (!hasCookies()) {
+    const restored = await tryRestoreSession();
+    if (!restored) {
+      return res.status(401).json({ error: "Not authenticated. Call GET /api/login first." });
+    }
+  }
+
+  const prompt = [
+    "Summarize the attached file.",
+    "Return concise sections: Overview, Key Points, Risks/Issues, and Action Items.",
+    instructions ? `Additional instructions: ${instructions}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  try {
+    const result = await generateImages(prompt, [
+      {
+        buffer: file.buffer,
+        fileName: file.originalname,
+        mimeType: file.mimetype || "application/octet-stream",
+      },
+    ]);
+
+    const summary = result.textContent?.trim();
+    if (!summary) {
+      return res.status(500).json({ error: "Gemini returned no summary text for this file." });
+    }
+
+    res.json({
+      summary,
+      metadata: {
+        conversationId: result.conversationId,
+        responseId: result.responseId,
+        modelName: result.modelName,
+        fileName: file.originalname,
+      },
+    });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error("Summarize error:", message);
     res.status(500).json({ error: message });
   }
 });

@@ -42,6 +42,16 @@ export interface StoredImage {
   aspectRatio?: string;
 }
 
+export interface SummarizeResult {
+  summary: string;
+  metadata: {
+    conversationId: string | null;
+    responseId: string | null;
+    modelName: string | null;
+    fileName: string;
+  };
+}
+
 export async function checkAuth(): Promise<AuthStatus> {
   const res = await fetch("/api/status");
   return res.json();
@@ -151,5 +161,23 @@ export async function deleteImages(filenames: string[]): Promise<{ deleted: stri
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+  return data;
+}
+
+export async function summarizeFile(file: File, instructions?: string): Promise<SummarizeResult> {
+  const form = new FormData();
+  form.append("file", file);
+  if (instructions) form.append("instructions", instructions);
+
+  const res = await fetch("/api/summarize", {
+    method: "POST",
+    body: form,
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || `Error ${res.status}`);
+  }
+
   return data;
 }

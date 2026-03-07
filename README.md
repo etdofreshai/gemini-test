@@ -1,12 +1,16 @@
-# Gemini Image Generation API
+# Gemini Tools (Image Generator + File Summarizer)
 
-A self-hosted API server for generating images via Google Gemini, with full control over authentication and generated content.
+A self-hosted Gemini toolkit with two web tools:
+- **Image Generator** (existing behavior preserved)
+- **File Summarizer** (new upload-and-summarize flow)
 
 ## Features
 
-- 🎨 **Image Generation**: Generate images from text prompts using Gemini 3.0 Pro
+- 🏠 **Launcher Home Page**: Entry point at `/` linking to both tools
+- 🎨 **Image Generator**: Generate images from text prompts using Gemini 3.0 Pro
 - 🔄 **Image-to-Image**: Use reference images to guide generation
 - 📐 **Aspect Ratios**: Support for 1:1, 4:3, 3:4, 16:9, 9:16
+- 📝 **File Summarizer**: Upload a file and get a structured summary
 - 🔐 **Remote Login**: Browser-based Google authentication with live screencast
 - 🐳 **Docker Ready**: Production-ready container with Chromium + Xvfb
 - 🏥 **Health Endpoint**: Built-in health monitoring
@@ -57,6 +61,12 @@ npm start
 2. Click **"Login"** to open the remote browser
 3. Sign in to your Google account
 4. Cookies are automatically captured and stored
+
+### Web Tool URLs
+
+- Launcher/Home: `http://localhost:3000/`
+- Image Generator: `http://localhost:3000/image-generator` (or `/image-generator.html`)
+- File Summarizer: `http://localhost:3000/file-summarizer` (or `/file-summarizer.html`)
 
 **Alternative**: Set cookies manually in `.env`:
 
@@ -198,6 +208,44 @@ curl -X POST http://localhost:3000/api/generate \
 | 401 | Not authenticated. Call GET /api/login first. |
 | 413 | File too large. Maximum size is 10MB per file. |
 | 500 | Generation error (see message for details) |
+
+---
+
+### Summarize File
+
+```http
+POST /api/summarize
+Content-Type: multipart/form-data
+```
+
+Upload a single file and receive a concise summary.
+
+**Parameters:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `file` | file | ✅ | File to summarize (max 20MB) |
+| `instructions` | string | ❌ | Extra summary instructions |
+
+**Request Example (cURL):**
+```bash
+curl -X POST http://localhost:3000/api/summarize \
+  -F "file=@./report.pdf" \
+  -F "instructions=Focus on risks and action items"
+```
+
+**Response:**
+```json
+{
+  "summary": "Overview...",
+  "metadata": {
+    "conversationId": "c_abc123",
+    "responseId": "resp_xyz",
+    "modelName": "Gemini 3.0 Pro",
+    "fileName": "report.pdf"
+  }
+}
+```
 
 ---
 

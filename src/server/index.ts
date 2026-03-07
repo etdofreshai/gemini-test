@@ -45,7 +45,16 @@ async function main() {
   // Remote browser login UI (self-contained HTML — must be before SPA fallback)
   app.use("/auth", remoteLoginRouter);
 
-  // SPA fallback — serve index.html for unmatched GET routes
+  // Tool pages
+  app.get("/", (_req, res) => res.sendFile(path.join(clientDir, "index.html")));
+  app.get("/image-generator", (_req, res) =>
+    res.sendFile(path.join(clientDir, "image-generator.html"))
+  );
+  app.get("/file-summarizer", (_req, res) =>
+    res.sendFile(path.join(clientDir, "file-summarizer.html"))
+  );
+
+  // Fallback to launcher for unmatched GET routes
   app.get("*", (_req, res) => {
     res.sendFile(path.join(clientDir, "index.html"));
   });
