@@ -391,9 +391,21 @@ router.post("/summarize", summarizeUpload.single("file"), async (req, res) => {
   }
 
   const prompt = [
-    "Summarize the attached file.",
-    "Return concise sections: Overview, Key Points, Risks/Issues, and Action Items.",
-    instructions ? `Additional instructions: ${instructions}` : null,
+    "Analyze the attached file for memory retrieval and archival.",
+    "",
+    "If the raw content (transcription, OCR, extracted text) is under ~500 words,",
+    "return it verbatim under a Raw Content section. Otherwise, summarize using",
+    "the structure below.",
+    "",
+    "- Title: A descriptive, searchable title for this file.",
+    "- Summary: One paragraph capturing the essence — what it is, what it says,",
+    "  and why it matters.",
+    "- File Description: What type of file this is (document, video, audio,",
+    "  image, screenshot, etc.), its format, and any relevant metadata like",
+    "  duration, dimensions, speaker, author, or date.",
+    "- Tags: 5-15 lowercase comma-separated keywords for search",
+    "  (e.g., \"invoice, acme-corp, q3-2025, accounts-payable\").",
+    instructions ? `\nAdditional instructions: ${instructions}` : null,
   ]
     .filter(Boolean)
     .join("\n");
