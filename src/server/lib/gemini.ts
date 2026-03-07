@@ -329,16 +329,21 @@ export function parseStreamResponse(responseText: string): ParsedResponse {
       //   candidate[1] = [["text", ...], ...]
       try {
         const textData = candidate[1];
+        let candidateText: string | null = null;
+
         if (Array.isArray(textData) && textData.length > 0) {
-          // candidate[1][0] is typically the text string or an array containing it
           const firstPart = textData[0];
           if (typeof firstPart === "string") {
-            pushTextPart(firstPart);
+            candidateText = firstPart.trim();
           } else if (Array.isArray(firstPart) && typeof firstPart[0] === "string") {
-            pushTextPart(firstPart[0]);
+            candidateText = firstPart[0].trim();
           }
         } else if (typeof textData === "string") {
-          pushTextPart(textData);
+          candidateText = textData.trim();
+        }
+
+        if (candidateText) {
+          pushTextPart(candidateText);
         }
       } catch {
         // Text extraction is best-effort; don't fail on parsing oddities
@@ -395,6 +400,7 @@ export function parseStreamResponse(responseText: string): ParsedResponse {
         }
       }
     }
+
   }
 
   const textContent = textParts.length > 0 ? textParts.join("\n\n") : null;
