@@ -232,6 +232,29 @@ export function parseStreamResponse(responseText: string): ParsedResponse {
   let responseId: string | null = null;
   let modelName: string | null = null;
 
+  const pushTextPart = (raw: unknown) => {
+    if (typeof raw !== "string") return;
+    const text = raw.trim();
+    if (!text) return;
+
+    const last = textParts[textParts.length - 1];
+    if (!last) {
+      textParts.push(text);
+      return;
+    }
+
+    // Gemini stream chunks can be cumulative snapshots of the same answer.
+    // Keep only the latest expanded version instead of concatenating duplicates.
+    if (text === last) return;
+    if (text.startsWith(last)) {
+      textParts[textParts.length - 1] = text;
+      return;
+    }
+    if (last.startsWith(text)) return;
+
+    textParts.push(text);
+  };
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
     if (/^\d+$/.test(line)) continue;
@@ -309,13 +332,13 @@ export function parseStreamResponse(responseText: string): ParsedResponse {
         if (Array.isArray(textData) && textData.length > 0) {
           // candidate[1][0] is typically the text string or an array containing it
           const firstPart = textData[0];
-          if (typeof firstPart === "string" && firstPart.trim().length > 0) {
-            textParts.push(firstPart.trim());
-          } else if (Array.isArray(firstPart) && typeof firstPart[0] === "string" && firstPart[0].trim().length > 0) {
-            textParts.push(firstPart[0].trim());
+          if (typeof firstPart === "string") {
+            pushTextPart(firstPart);
+          } else if (Array.isArray(firstPart) && typeof firstPart[0] === "string") {
+            pushTextPart(firstPart[0]);
           }
-        } else if (typeof textData === "string" && textData.trim().length > 0) {
-          textParts.push(textData.trim());
+        } else if (typeof textData === "string") {
+          pushTextPart(textData);
         }
       } catch {
         // Text extraction is best-effort; don't fail on parsing oddities
