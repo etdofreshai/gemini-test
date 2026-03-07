@@ -73,6 +73,51 @@ function validateAspectRatio(aspectRatio: unknown): { valid: boolean; value?: st
   return { valid: true, value: aspectRatio };
 }
 
+function cleanSummaryText(raw: string): string {
+  const blocks = raw
+    .split(/\n{2,}/)
+    .map((b) => b.trim())
+    .filter(Boolean);
+
+  const out: string[] = [];
+  const seen = new Set<string>();
+
+  const norm = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
+
+  for (const block of blocks) {
+    const normalized = norm(block);
+    if (!normalized) continue;
+
+    const last = out[out.length - 1];
+    if (!last) {
+      out.push(block);
+      seen.add(normalized);
+      continue;
+    }
+
+    const lastNorm = norm(last);
+    if (normalized === lastNorm) continue;
+
+    // Handle cumulative chunk expansion: replace shorter previous block with expanded one
+    if (normalized.startsWith(lastNorm)) {
+      out[out.length - 1] = block;
+      seen.delete(lastNorm);
+      seen.add(normalized);
+      continue;
+    }
+
+    // Ignore regressed/truncated variants
+    if (lastNorm.startsWith(normalized)) continue;
+
+    if (seen.has(normalized)) continue;
+
+    out.push(block);
+    seen.add(normalized);
+  }
+
+  return out.join("\n\n");
+}
+
 // GET /api/images — list all stored images
 router.get("/images", (_req, res) => {
   try {
@@ -336,7 +381,8 @@ router.post("/summarize", summarizeUpload.single("file"), async (req, res) => {
       },
     ]);
 
-    const summary = result.textContent?.trim();
+    const rawSummary = result.textContent?.trim();
+    const summary = rawSummary ? cleanSummaryText(rawSummary) : "";
     if (!summary) {
       return res.status(500).json({ error: "Gemini returned no summary text for this file." });
     }
