@@ -272,7 +272,7 @@ router.post("/generate", upload.array("images", MAX_FILES), async (req, res) => 
     if (result.images.length === 0 && result.textContent) {
       return res.json({
         images: [],
-        textContent: result.textContent,
+        textContent: cleanSummaryText(result.textContent),
         metadata: {
           conversationId: result.conversationId,
           responseId: result.responseId,
