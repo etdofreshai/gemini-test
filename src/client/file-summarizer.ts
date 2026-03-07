@@ -64,7 +64,7 @@ async function handleSummarize() {
 
   try {
     const data = await summarizeFile(file, instructionsInput.value.trim());
-    summaryOutput.textContent = data.summary;
+    summaryOutput.textContent = cleanRenderedSummary(data.summary);
     summaryMeta.textContent = `Model: ${data.metadata.modelName || "unknown"}${data.metadata.conversationId ? ` • Conversation: ${data.metadata.conversationId}` : ""}`;
   } catch (err: unknown) {
     showToast(err instanceof Error ? err.message : "Summarization failed");
@@ -74,6 +74,43 @@ async function handleSummarize() {
     summarizeBtn.disabled = false;
     summarizeBtn.textContent = "Summarize";
   }
+}
+
+function cleanRenderedSummary(raw: string): string {
+  const text = (raw || "").trim();
+  if (!text) return "";
+
+  const headingRe = /^###\s+(.+)$/gm;
+  const matches = Array.from(text.matchAll(headingRe));
+  if (matches.length === 0) return text;
+
+  const sections = new Map<string, { title: string; body: string }>();
+  for (let i = 0; i < matches.length; i++) {
+    const m = matches[i];
+    const title = m[1].trim();
+    const key = title.toLowerCase();
+    const start = (m.index ?? 0) + m[0].length;
+    const end = i + 1 < matches.length ? (matches[i + 1].index ?? text.length) : text.length;
+    const body = text.slice(start, end).trim();
+    if (!body) continue;
+
+    const prev = sections.get(key);
+    if (!prev || body.length > prev.body.length) {
+      sections.set(key, { title, body });
+    }
+  }
+
+  const order = ["overview", "key points", "risks/issues", "action items"];
+  const out: string[] = [];
+  for (const key of order) {
+    const s = sections.get(key);
+    if (s) out.push(`### ${s.title}\n${s.body}`);
+  }
+  for (const [key, s] of sections.entries()) {
+    if (!order.includes(key)) out.push(`### ${s.title}\n${s.body}`);
+  }
+
+  return out.join("\n\n").trim() || text;
 }
 
 function showToast(msg: string) {
