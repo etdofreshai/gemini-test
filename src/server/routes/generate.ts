@@ -74,48 +74,74 @@ function validateAspectRatio(aspectRatio: unknown): { valid: boolean; value?: st
 }
 
 function cleanSummaryText(raw: string): string {
-  const blocks = raw
+  const text = raw.replace(/\r\n/g, "\n").trim();
+  if (!text) return "";
+
+  // Fast path: normalize repeated non-heading blocks first
+  const blocks = text
     .split(/\n{2,}/)
     .map((b) => b.trim())
     .filter(Boolean);
 
-  const out: string[] = [];
-  const seen = new Set<string>();
-
+  const dedupedBlocks: string[] = [];
   const norm = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
 
   for (const block of blocks) {
-    const normalized = norm(block);
-    if (!normalized) continue;
-
-    const last = out[out.length - 1];
+    const n = norm(block);
+    if (!n) continue;
+    const last = dedupedBlocks[dedupedBlocks.length - 1];
     if (!last) {
-      out.push(block);
-      seen.add(normalized);
+      dedupedBlocks.push(block);
       continue;
     }
-
-    const lastNorm = norm(last);
-    if (normalized === lastNorm) continue;
-
-    // Handle cumulative chunk expansion: replace shorter previous block with expanded one
-    if (normalized.startsWith(lastNorm)) {
-      out[out.length - 1] = block;
-      seen.delete(lastNorm);
-      seen.add(normalized);
+    const ln = norm(last);
+    if (n === ln) continue;
+    if (n.startsWith(ln)) {
+      dedupedBlocks[dedupedBlocks.length - 1] = block;
       continue;
     }
-
-    // Ignore regressed/truncated variants
-    if (lastNorm.startsWith(normalized)) continue;
-
-    if (seen.has(normalized)) continue;
-
-    out.push(block);
-    seen.add(normalized);
+    if (ln.startsWith(n)) continue;
+    dedupedBlocks.push(block);
   }
 
-  return out.join("\n\n");
+  const normalized = dedupedBlocks.join("\n\n");
+
+  // Canonicalize repeated markdown sections by heading, keeping the most complete body per section.
+  const headingRe = /^###\s+(.+)$/gm;
+  const matches = Array.from(normalized.matchAll(headingRe));
+  if (matches.length === 0) return normalized;
+
+  const sections = new Map<string, { title: string; body: string }>();
+  for (let i = 0; i < matches.length; i++) {
+    const m = matches[i];
+    const title = m[1].trim();
+    const start = (m.index ?? 0) + m[0].length;
+    const end = i + 1 < matches.length ? (matches[i + 1].index ?? normalized.length) : normalized.length;
+    const body = normalized.slice(start, end).trim();
+    if (!body) continue;
+
+    const key = title.toLowerCase();
+    const existing = sections.get(key);
+    if (!existing || body.length > existing.body.length) {
+      sections.set(key, { title, body });
+    }
+  }
+
+  const preferredOrder = ["overview", "key points", "risks/issues", "action items"];
+  const ordered: string[] = [];
+
+  for (const key of preferredOrder) {
+    const sec = sections.get(key);
+    if (sec) ordered.push(`### ${sec.title}\n${sec.body}`);
+  }
+
+  for (const [key, sec] of sections.entries()) {
+    if (!preferredOrder.includes(key)) {
+      ordered.push(`### ${sec.title}\n${sec.body}`);
+    }
+  }
+
+  return ordered.join("\n\n").trim() || normalized;
 }
 
 // GET /api/images — list all stored images
