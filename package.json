@@ -16,7 +16,7 @@
   "dependencies": {
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
-    "gemini-watermark-remover": "file:../gemini-watermark-remover",
+    "gemini-watermark-remover": "file:vendor/gemini-watermark-remover",
     "mime-types": "^3.0.2",
     "multer": "^1.4.5-lts.2",
     "sharp": "^0.34.5",

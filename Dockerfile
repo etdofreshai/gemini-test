@@ -3,7 +3,8 @@ FROM node:22-slim AS build
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm ci
+COPY vendor ./vendor
+RUN npm ci --include=dev
 
 COPY . .
 RUN npm run build
@@ -44,6 +45,7 @@ ENV DISPLAY=:99
 WORKDIR /app
 
 COPY package.json package-lock.json ./
+COPY vendor ./vendor
 RUN npm ci --omit=dev
 
 COPY --from=build /app/dist ./dist
