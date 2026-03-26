@@ -13,6 +13,7 @@ import {
 } from "../lib/gemini.js";
 import { upscaleStore } from "../lib/upscale-store.js";
 import { getImageMetaStore } from "../lib/image-meta-store.js";
+import { removeWatermark } from "../lib/watermark-remover.js";
 
 const router = Router();
 
@@ -288,7 +289,12 @@ router.post("/generate", upload.array("images", MAX_FILES), async (req, res) => 
     const metaStore = getImageMetaStore(IMAGES_DIR);
     for (const img of pngImages) {
       try {
-        const buf = await downloadImageToBuffer(img.url);
+        let buf = await downloadImageToBuffer(img.url);
+        try {
+          buf = await removeWatermark(buf);
+        } catch (wmErr) {
+          console.warn(`Watermark removal failed for ${img.filename}, saving original:`, wmErr);
+        }
         const id = crypto.randomUUID();
         const ext = img.mime === "image/png" ? ".png" : ".jpg";
         const savedName = `${id}${ext}`;
@@ -492,7 +498,12 @@ async function runUpscale(data: UpscaleRequest) {
     tokens
   );
 
-  const buf = await downloadImageToBuffer(fullSizeUrl);
+  let buf = await downloadImageToBuffer(fullSizeUrl);
+  try {
+    buf = await removeWatermark(buf);
+  } catch (wmErr) {
+    console.warn("Watermark removal failed for upscaled image, saving original:", wmErr);
+  }
   const id = crypto.randomUUID();
   const savedName = `${id}.png`;
   fs.writeFileSync(path.join(IMAGES_DIR, savedName), buf);
