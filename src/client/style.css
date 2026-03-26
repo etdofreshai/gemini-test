@@ -433,6 +433,43 @@ body.selection-mode .delete-btn { display: none; }
   min-height: 180px;
 }
 
+/* Watermark Remover */
+.wm-page {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px;
+  overflow-y: auto;
+  height: 100vh;
+}
+.wm-header { margin-bottom: 20px; }
+.wm-header h1 { font-size: 30px; margin: 8px 0 6px; }
+.wm-header p { color: #aaa; }
+.wm-drop-zone {
+  border: 2px dashed #333;
+  border-radius: 12px;
+  padding: 48px 24px;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.wm-drop-zone:hover, .wm-drop-zone.drag-over {
+  border-color: #4a6cf7;
+  background: rgba(74,108,247,0.05);
+}
+.wm-drop-icon { font-size: 36px; margin-bottom: 10px; }
+.wm-comparison {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 20px;
+}
+.wm-col h3 { margin-bottom: 8px; color: #aaa; font-size: 14px; }
+.wm-col img { width: 100%; border-radius: 8px; background: #1a1a1a; }
+#after-container { min-height: 200px; display: flex; align-items: center; justify-content: center; background: #1a1a1a; border-radius: 8px; }
+#after-container img { width: 100%; }
+.wm-status { margin: 12px 0; color: #aaa; font-size: 14px; }
+#wm-actions { display: flex; gap: 10px; margin-top: 8px; }
+
 /* Spinner */
 .spinner {
   width: 20px;

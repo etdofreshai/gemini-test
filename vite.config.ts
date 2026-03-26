@@ -10,6 +10,7 @@ export default defineConfig({
         main: "src/client/index.html",
         imageGenerator: "src/client/image-generator.html",
         fileSummarizer: "src/client/file-summarizer.html",
+        watermarkRemover: "src/client/watermark-remover.html",
       },
     },
   },

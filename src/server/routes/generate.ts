@@ -145,6 +145,29 @@ function cleanSummaryText(raw: string): string {
   return ordered.join("\n\n").trim() || normalized;
 }
 
+// POST /api/remove-watermark — upload an image, return it with watermark removed
+const wmUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_FILE_SIZE_BYTES, files: 1 },
+  fileFilter,
+});
+
+router.post("/remove-watermark", wmUpload.single("image"), async (req, res) => {
+  const file = req.file;
+  if (!file) {
+    return res.status(400).json({ error: "Missing image upload (field name: image)" });
+  }
+  try {
+    const cleaned = await removeWatermark(file.buffer);
+    res.set("Content-Type", "image/png");
+    res.send(cleaned);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error("Watermark removal error:", message);
+    res.status(500).json({ error: message });
+  }
+});
+
 // GET /api/images — list all stored images
 router.get("/images", (_req, res) => {
   try {

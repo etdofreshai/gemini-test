@@ -20,6 +20,11 @@ app.innerHTML = `
         <h2>File Summarizer</h2>
         <p>Upload a file and get a concise summary from Gemini.</p>
       </a>
+      <a class="tool-card" href="/watermark-remover.html">
+        <div class="tool-icon">✨</div>
+        <h2>Watermark Remover</h2>
+        <p>Remove the Gemini "Made with Google AI" watermark from images.</p>
+      </a>
     </div>
   </main>
 `;
